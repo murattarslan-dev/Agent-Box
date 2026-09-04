@@ -1,0 +1,61 @@
+# Şablon: up.sh --k8s bunu ${VAR} değerlerini .env'den doldurarak uygular.
+# Secret ayrı olarak .env'den üretilir (kubectl create secret generic claude-agent-env --from-env-file=.env).
+# SDK PVC'leri (sdk-<isim>-<sürüm>) ve kurulum Job'ları scripts/sdk-volumes.sh tarafından üretilir;
+# ${SDK_VOLUME_MOUNTS} / ${SDK_VOLUMES} satırları up.sh tarafından doldurulur.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${K8S_NAMESPACE}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claude-agent-data
+  namespace: ${K8S_NAMESPACE}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  ${K8S_STORAGE_CLASS_LINE}
+  resources:
+    requests:
+      storage: ${K8S_STORAGE_SIZE}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-agent
+  namespace: ${K8S_NAMESPACE}
+  labels: { app: claude-agent }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # tek repo, tek oturum: iki pod aynı anda çalışmasın
+  selector:
+    matchLabels: { app: claude-agent }
+  template:
+    metadata:
+      labels: { app: claude-agent }
+    spec:
+      securityContext:
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: agent
+          image: ${IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          envFrom:
+            - secretRef: { name: claude-agent-env }
+          env:
+            - { name: DATA_DIR, value: /data }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+${SDK_VOLUME_MOUNTS}
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "4",    memory: "6Gi" }
+          livenessProbe:
+            exec: { command: ["sh", "-c", "test -f /data/.healthy && test $(( $(date +%s) - $(stat -c %Y /data/.healthy) )) -lt 180"] }
+            initialDelaySeconds: 120
+            periodSeconds: 60
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: claude-agent-data }
+${SDK_VOLUMES}

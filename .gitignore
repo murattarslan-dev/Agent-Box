@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+data/
+.sdk-list
+.sdk-*.tmp
+docker-compose.override.yml
+*.log
+.env.bak.*

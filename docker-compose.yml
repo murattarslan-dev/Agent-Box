@@ -1,0 +1,24 @@
+services:
+  agent:
+    image: ${IMAGE:-claude-telegram-agent:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claude-telegram-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - ${DATA_PATH:-./data}:/data
+    # SDK kurulumları ve build'ler için makul kaynak; ihtiyaca göre değiştir
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-6g}
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

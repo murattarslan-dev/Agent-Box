@@ -1,0 +1,42 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax + shellcheck
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+          for f in up.sh docker/entrypoint.sh scripts/*.sh; do bash -n "$f"; done
+          shellcheck -S warning -e SC1091,SC2016 up.sh docker/entrypoint.sh scripts/*.sh
+
+      - name: SDK detection fixtures
+        run: |
+          set -e
+          mkdir -p /tmp/fx/flutter/android/app /tmp/fx/go
+          printf 'name: app\ndependencies:\n  flutter:\n    sdk: flutter\n' > /tmp/fx/flutter/pubspec.yaml
+          echo '{"flutter":"3.24.3"}' > /tmp/fx/flutter/.fvmrc
+          echo 'android { compileSdk = 34 }' > /tmp/fx/flutter/android/app/build.gradle.kts
+          printf 'module x\n\ngo 1.22\n\ntoolchain go1.22.5\n' > /tmp/fx/go/go.mod
+          chmod +x scripts/*.sh
+          scripts/sdk-detect.sh /tmp/fx/flutter --raw | tee /tmp/out1
+          grep -q '^flutter 3.24.3$' /tmp/out1 && grep -q '^android 34$' /tmp/out1 && grep -q '^jdk 17$' /tmp/out1
+          scripts/sdk-detect.sh /tmp/fx/go --raw | grep -q '^go 1.22.5$'
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+
+      - name: Docker build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: claude-telegram-agent:ci

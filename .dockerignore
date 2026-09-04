@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+data
+.git
+k8s
+*.md
+!agent-config/**/*.md
+.github
+docs
