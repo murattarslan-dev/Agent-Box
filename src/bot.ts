@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { Agent, type AgentIO, type Question } from "./agent.js";
 import { loadState, resetState, saveState } from "./state.js";
 import { ProgressMessage, Sender, escapeHtml } from "./telegram-io.js";
+import { formatLimits } from "./limits.js";
 
 interface PendingQuestion {
   kind: "question";
@@ -43,6 +44,7 @@ Bir görev yaz, ajan şu akışı izler:
 /diff — çalışma ağacındaki değişiklikler
 /log — son commit'ler
 /sdk — bağlı SDK'lar
+/limit — abonelik kullanımı (5 saat / 7 gün)
 /approve — plan kapısını elle aç
 /free — kapıları tamamen aç/kapat (dikkat)
 /whoami — Telegram kullanıcı id'n`;
@@ -240,6 +242,8 @@ export function createBot(agent: Agent): Bot {
   });
 
   // ---------- görev çalıştırma ----------
+  // NOT: grammY güncellemeleri sırayla işler; bu fonksiyon handler içinde ASLA await edilmez
+  // (void runPrompt(...)), yoksa ajan soru sorup cevabı beklerken buton tıklaması işlenemez.
   async function runPrompt(chatId: number, text: string, opts: { fresh?: boolean; title?: string } = {}) {
     if (agent.busy) {
       queue.push({ chatId, text });
@@ -258,12 +262,12 @@ export function createBot(agent: Agent): Bot {
       const r = await agent.run(text, io, { fresh: opts.fresh });
       const s = loadState();
       await progress.close(
-        `${r.ok ? "bitti" : "durdu"} · ${r.turns} tur · ${(r.durationMs / 1000).toFixed(0)}s · $${r.costUsd.toFixed(2)} (toplam $${s.costUsd.toFixed(2)})`,
+        `${r.ok ? "bitti" : "durdu"} · ${r.turns} tur · ${(r.durationMs / 1000).toFixed(0)}s · ≈$${r.costUsd.toFixed(2)} API eşd. (toplam ≈$${s.costUsd.toFixed(2)})`,
       );
       if (!r.ok) await sender.sendPlain(`⚠️ ${r.summary}`);
     } catch (e: any) {
-      await progress.close("hata");
-      await sender.sendPlain("❌ " + (e?.message ?? String(e)));
+      await progress.close("hata").catch(() => undefined);
+      await sender.sendPlain("❌ " + (e?.message ?? String(e))).catch(() => undefined);
     } finally {
       clearInterval(typing);
     }
@@ -294,7 +298,7 @@ export function createBot(agent: Agent): Bot {
     const task = ctx.match?.trim();
     if (task) {
       await ctx.reply("🆕 Yeni oturum. Görev başlıyor…");
-      await runPrompt(ctx.chat.id, task, { fresh: true });
+      void runPrompt(ctx.chat.id, task, { fresh: true });
     } else {
       await ctx.reply("🆕 Yeni oturum açıldı. Görevi yaz.");
     }
@@ -311,7 +315,8 @@ export function createBot(agent: Agent): Bot {
         `🌿 Dal: <code>${escapeHtml(branch)}</code>${dirty ? ` · ${dirty.split("\n").length} değişik dosya` : " · temiz"}`,
         s.task ? `🎯 Görev: ${escapeHtml(s.task)}` : "🎯 Görev yok",
         s.prUrl ? `🔗 PR: ${escapeHtml(s.prUrl)}` : "",
-        `🧠 Oturum: ${s.sessionId ? s.sessionId.slice(0, 8) : "-"} · ${s.turns} tur · $${s.costUsd.toFixed(2)}`,
+        `🧠 Oturum: ${s.sessionId ? s.sessionId.slice(0, 8) : "-"} · ${s.turns} tur · ≈$${s.costUsd.toFixed(2)} API eşdeğeri`,
+        s.limits && Object.keys(s.limits).length ? "📊 " + escapeHtml(formatLimits(s.limits)).split("\n").join("\n    ") : "",
         `⚙️ ${agent.busy ? "çalışıyor" : "boşta"} · kuyruk: ${queue.length} · bekleyen soru: ${pending.size}`,
       ]
         .filter(Boolean)
@@ -342,7 +347,7 @@ export function createBot(agent: Agent): Bot {
   });
 
   bot.command("init", async (ctx) => {
-    await runPrompt(
+    void runPrompt(
       ctx.chat.id,
       "`bootstrap-env` skill'ini uygula: repoyu analiz et, gereken SDK/araçları tespit et, eksikleri $SDK_HOME altına kur, env.sh'ı güncelle ve doğrula. Sonunda kısa bir rapor ver.",
       { title: "bootstrap-env" },
@@ -350,13 +355,13 @@ export function createBot(agent: Agent): Bot {
   });
 
   bot.command("review", async (ctx) => {
-    await runPrompt(ctx.chat.id, "`review` skill'ini uygula: mevcut dalın değişikliklerini review et ve bulguları raporla.", {
+    void runPrompt(ctx.chat.id, "`review` skill'ini uygula: mevcut dalın değişikliklerini review et ve bulguları raporla.", {
       title: "review",
     });
   });
 
   bot.command("pr", async (ctx) => {
-    await runPrompt(
+    void runPrompt(
       ctx.chat.id,
       "Review tamamlanmadıysa `review` skill'ini uygula; sonra `open-pr` skill'i ile PR onayı al ve PR'ı aç.",
       { title: "open-pr" },
@@ -369,6 +374,15 @@ export function createBot(agent: Agent): Bot {
     const sender = new Sender(bot, ctx.chat.id);
     await sender.sendMarkdown(stat.trim() ? "```\n" + stat + "\n```" : "Değişiklik yok.");
     if (full.trim()) await sender.sendDocument("changes.diff", full, "Çalışma ağacı diff'i");
+  });
+
+  bot.command("limit", async (ctx) => {
+    const s = loadState();
+    await ctx.reply(
+      "📊 Abonelik kullanımı\n" + formatLimits(s.limits) +
+        "\n\n5 saatlik pencere dolunca ajan sıfırlanmaya kadar bekler; 7 günlük dolunca hafta sonuna kadar. " +
+        "Ajan çalışırken eşik aşılırsa (%80 ve dolunca) buraya kendiliğinden uyarı gelir.",
+    );
   });
 
   bot.command("sdk", async (ctx) => {
@@ -400,7 +414,7 @@ export function createBot(agent: Agent): Bot {
       await answerCurrent(id, pq, text);
       return;
     }
-    await runPrompt(ctx.chat.id, text);
+    void runPrompt(ctx.chat.id, text);
   });
 
   bot.catch((err) => {

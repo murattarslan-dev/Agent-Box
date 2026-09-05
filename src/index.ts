@@ -27,6 +27,7 @@ async function main() {
     { command: "diff", description: "Değişiklikler" },
     { command: "log", description: "Son commit'ler" },
     { command: "sdk", description: "Bağlı SDK'lar" },
+    { command: "limit", description: "Abonelik kullanımı" },
     { command: "approve", description: "Plan kapısını aç" },
     { command: "free", description: "Serbest modu aç/kapat" },
     { command: "help", description: "Yardım" },
@@ -60,6 +61,8 @@ async function main() {
     onStart: (me) => console.log(`[bot] @${me.username} dinliyor`),
   });
 }
+
+process.on("unhandledRejection", (e) => console.error("[bot] unhandledRejection:", e));
 
 main().catch((e) => {
   console.error("[bot] ölümcül:", e);

@@ -10,6 +10,15 @@ export type Phase =
   | "awaiting_pr_approval"
   | "pr_opened";
 
+export interface LimitInfo {
+  status: "allowed" | "allowed_warning" | "rejected" | string;
+  /** 0-100 */
+  utilization?: number;
+  /** epoch ms */
+  resetsAt?: number;
+  at: string;
+}
+
 export interface AgentState {
   /** Claude Code oturum id'si (resume için). */
   sessionId?: string;
@@ -25,8 +34,10 @@ export interface AgentState {
   /** Kısa görev başlığı (ilk prompt'tan). */
   task?: string;
   prUrl?: string;
-  /** Toplam maliyet (USD) — oturum boyunca. */
+  /** Toplam maliyet (USD, API eşdeğeri) — oturum boyunca. */
   costUsd: number;
+  /** Abonelik limitleri (SDK rate_limit_event): pencere → doluluk. */
+  limits?: Record<string, LimitInfo>;
   turns: number;
   updatedAt: string;
 }

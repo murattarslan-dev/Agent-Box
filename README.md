@@ -64,11 +64,12 @@ yazdıkların kuyruğa girer.
 | Komut | |
 |-------|-|
 | `/new [görev]` | Yeni oturum; kapılar sıfırlanır. Aynı PR'da devam etmek için `/new` demeden yaz |
-| `/status` | Faz, dal, kapı durumu, maliyet |
+| `/status` | Faz, dal, kapı durumu, kullanım. Gösterilen `≈$` değeri gerçek fatura değil, aboneliğinle yaptığın işin API liste fiyatıyla eşdeğeri |
 | `/cancel` | Çalışan işi durdur |
 | `/init` | Ortamı doğrula (SDK'lar, `flutter doctor` vb.), eksik varsa kur |
 | `/review` · `/pr` | Review'ı / PR akışını elle tetikle |
 | `/diff` · `/log` · `/sdk` | Çalışma ağacı diff'i (dosya) · son commit'ler · bağlı SDK'lar |
+| `/limit` | Abonelik kullanımı: 5 saatlik ve 7 günlük pencere doluluğu, sıfırlanma saati. %80'i geçince ve dolunca bot kendiliğinden uyarır |
 | `/approve` | Plan kapısını buton olmadan aç |
 | `/free` | Kapıları tamamen kaldır — yalnızca deneme reposunda |
 
@@ -141,6 +142,7 @@ Sihirbaz zorunlu beşini yazar; gerisi `.env.example`'daki varsayılanlarla geli
 | `GIT_PROVIDER` | `github` / `gitlab`; self-hosted için gerekli, aksi halde host'tan anlaşılır |
 | `GIT_USER_NAME` · `GIT_USER_EMAIL` | Ajanın commit kimliği |
 | `CLAUDE_MODEL` | Model override (boş = Claude Code varsayılanı) |
+| `TZ` | Saat dilimi; limit sıfırlanma saatleri bu dilimde (`Europe/Istanbul`) |
 | `MAX_TURNS` | Görev başına tur limiti (400) |
 | `AUTO_PR` | `true`: review geçince sormadan PR aç |
 | `FREE_MODE` | `true`: onay kapıları kapalı — yalnızca deneme reposu |

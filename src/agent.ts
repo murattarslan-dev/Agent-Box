@@ -238,6 +238,11 @@ export class Agent {
           };
           if (r.subtype !== "success") {
             result.summary = `Oturum ${r.subtype} ile bitti${r.errors?.length ? ": " + r.errors.join("; ") : ""}`;
+            const rejected = Object.entries(loadState().limits ?? {}).find(([, l]) => l.status === "rejected");
+            if (rejected) {
+              const { fmtTime } = await import("./limits.js");
+              result.summary += `\n⛔ Abonelik limiti dolu (${rejected[0]}); sıfırlanma ${fmtTime(rejected[1].resetsAt)}. O saatten sonra "devam et" yaz.`;
+            }
           }
           const s = loadState();
           saveState({ costUsd: s.costUsd + result.costUsd, turns: s.turns + result.turns, sessionId: r.session_id ?? s.sessionId });
@@ -280,6 +285,27 @@ export class Agent {
             const { toolLine } = await import("./telegram-io.js");
             io.progress(toolLine(b.name, b.input ?? {}));
           }
+        }
+        break;
+      }
+      case "rate_limit_event": {
+        const info = (msg as any).rate_limit_info ?? {};
+        const type: string = info.rateLimitType ?? "unknown";
+        let util: number | undefined = typeof info.utilization === "number" ? info.utilization : undefined;
+        if (util !== undefined && util <= 1) util = util * 100;
+        let resetsAt: number | undefined = typeof info.resetsAt === "number" ? info.resetsAt : undefined;
+        if (resetsAt !== undefined && resetsAt < 1e12) resetsAt = resetsAt * 1000;
+        const prev = loadState().limits?.[type];
+        const next = { status: info.status ?? "allowed", utilization: util, resetsAt, at: new Date().toISOString() };
+        saveState({ limits: { ...(loadState().limits ?? {}), [type]: next } });
+        const worsened = next.status !== "allowed" && prev?.status !== next.status;
+        const crossed = util !== undefined && (prev?.utilization ?? 0) < 80 && util >= 80;
+        if (worsened || crossed) {
+          const { formatLimits } = await import("./limits.js");
+          await io.status(
+            (next.status === "rejected" ? "⛔ Abonelik limitine takıldın." : "⚠️ Abonelik limitine yaklaşıyorsun.") +
+              "\n" + formatLimits(loadState().limits),
+          );
         }
         break;
       }
