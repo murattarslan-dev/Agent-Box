@@ -3,10 +3,16 @@ import { Agent } from "./agent.js";
 import { createBot, markHealthy } from "./bot.js";
 import { loadState } from "./state.js";
 import { checkClaudeAuth } from "./auth-check.js";
+import { FileServer } from "./files.js";
+import { fetchUsage } from "./usage.js";
 
 async function main() {
   const agent = new Agent();
-  const bot = createBot(agent);
+  const files = new FileServer();
+  const bot = createBot(agent, files);
+  files.start((name) => {
+    for (const uid of config.allowedUserIds) bot.api.sendMessage(uid, `📥 ${name} indiriliyor`).catch(() => undefined);
+  });
 
   const st = loadState();
   console.log(
@@ -28,6 +34,9 @@ async function main() {
     { command: "log", description: "Son commit'ler" },
     { command: "sdk", description: "Bağlı SDK'lar" },
     { command: "limit", description: "Abonelik kullanımı" },
+    { command: "model", description: "Modeli seç" },
+    { command: "apk", description: "APK build et ve gönder" },
+    { command: "builds", description: "Son build'ler ve linkleri" },
     { command: "approve", description: "Plan kapısını aç" },
     { command: "free", description: "Serbest modu aç/kapat" },
     { command: "help", description: "Yardım" },
@@ -39,6 +48,7 @@ async function main() {
 
   // token kontrolü + yetkili kullanıcılara açılış bildirimi
   const auth = await checkClaudeAuth();
+  if (auth.ok) void fetchUsage();
   if (!auth.ok) console.error(`[bot] UYARI: ${auth.reason}`);
   const hello = auth.ok
     ? `🟢 Ajan ayakta · ${config.repoPath || config.repoUrl} · faz: ${st.phase}${st.sessionId ? " (oturum devam ediyor)" : ""}`
@@ -50,6 +60,7 @@ async function main() {
   const stop = async () => {
     console.log("[bot] kapanıyor…");
     await agent.interrupt();
+    files.stop();
     await bot.stop();
     process.exit(0);
   };

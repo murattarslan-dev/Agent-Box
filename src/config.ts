@@ -44,6 +44,13 @@ export const config = {
   gitUserEmail: process.env.GIT_USER_EMAIL ?? "claude-agent@noreply.local",
   logLevel: process.env.LOG_LEVEL ?? "info",
 
+  /** Büyük dosya linkleri: tunnel (Cloudflare quick tunnel, varsayılan) | lan (PUBLIC_BASE_URL) | off */
+  fileLinks: (process.env.FILE_LINKS ?? "tunnel") as "tunnel" | "lan" | "off",
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || undefined,
+  filePort: Number(process.env.FILE_PORT ?? 8787),
+  linkTtlHours: Number(process.env.LINK_TTL_HOURS ?? 24),
+  cloudflaredPath: process.env.CLOUDFLARED_PATH ?? "/usr/local/bin/cloudflared",
+
   get statePath() {
     return path.join(this.dataDir, "state.json");
   },

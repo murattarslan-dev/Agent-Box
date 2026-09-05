@@ -56,6 +56,7 @@ yokken `git push` / `gh pr create` bir `PreToolUse` hook'u tarafından reddedili
 force-push her koşulda yasaktır.
 
 Ajan çalışırken tek bir "⏳" mesajı yerinde güncellenir (hangi dosyayı okuduğu, hangi komutu çalıştırdığı).
+Ajanın `.agent/outbox/` altına koyduğu dosyalar (APK, ekran görüntüsü, rapor) sana Telegram'dan gelir.
 Sorular her zaman buton olarak gelir; serbest cevap için "✍️ Kendi cevabımı yazacağım". Ajan meşgulken
 yazdıkların kuyruğa girer.
 
@@ -69,7 +70,10 @@ yazdıkların kuyruğa girer.
 | `/init` | Ortamı doğrula (SDK'lar, `flutter doctor` vb.), eksik varsa kur |
 | `/review` · `/pr` | Review'ı / PR akışını elle tetikle |
 | `/diff` · `/log` · `/sdk` | Çalışma ağacı diff'i (dosya) · son commit'ler · bağlı SDK'lar |
-| `/limit` | Abonelik kullanımı: 5 saatlik ve 7 günlük pencere doluluğu, sıfırlanma saati. %80'i geçince ve dolunca bot kendiliğinden uyarır |
+| `/limit` | Abonelik kullanımı (canlı, Claude Code'un `/usage` ekranıyla aynı kaynak): 5 saatlik ve 7 günlük pencerede kullanılan/kalan yüzde, sıfırlanma saati. %80'i geçince ve dolunca bot kendiliğinden uyarır |
+| `/model [ad]` | Modeli seç: butonla varsayılan / sonnet / opus / haiku ya da tam ad (`/model claude-sonnet-4-5`); sonraki turdan itibaren |
+| `/apk [debug\|release] [all] [flavor X]` | Flutter APK build eder; ≤ 50 MB ise Telegram'dan dosya olarak, büyükse **download linki** olarak gönderir (varsayılan: debug, yalnızca arm64). Ajan da görev içinde `build-apk` skill'iyle yapabilir |
+| `/builds` | Son build'ler ve indirme linkleri |
 | `/approve` | Plan kapısını buton olmadan aç |
 | `/free` | Kapıları tamamen kaldır — yalnızca deneme reposunda |
 
@@ -119,6 +123,20 @@ container açılışı: scripts/sdk-env.sh → /data/sdks/env.sh  (BASH_ENV; aja
   sonraki `./up.sh` bunu indirmeden paylaşımlı volume'a terfi ettirir.
 - Desteklenen: `jdk android flutter dart go node rust`. Yeni SDK = `scripts/sdk-install.sh`'a bir `case` +
   `scripts/sdk-detect.sh`'a bir kural.
+
+## Büyük dosyalar: download linki
+
+Telegram botları 50 MB'tan büyük dosya gönderemez; debug APK'lar kolayca 100-200 MB olur. Bot bunun için kendi
+içinde küçük bir HTTP sunucusu (`:8787`, süreli ve tahmin edilemez token'lı `/d/<token>/<dosya>` linkleri) barındırır
+ve varsayılan olarak **Cloudflare quick tunnel** ile dışarı açar: hesap, domain, port yönlendirme gerekmez;
+container açılışında rastgele bir `https://…trycloudflare.com` adresi alınır, link telefondan mobil veride bile
+çalışır. Linkler `LINK_TTL_HOURS` (24) saat geçerlidir; `/builds` yeni link üretir.
+
+Alternatifler (`.env`): `FILE_LINKS=lan` + `PUBLIC_BASE_URL=http://<PC-LAN-IP>:8787` (aynı Wi-Fi; Windows'ta
+`ipconfig` → IPv4), kendi domain'in / tünelin (`PUBLIC_BASE_URL=https://apk.senin.dev`), ya da `FILE_LINKS=off`.
+Quick tunnel Cloudflare'ın test amaçlı hizmetidir, garanti vermez; sürekli kullanım için ücretsiz bir Cloudflare
+hesabıyla kalıcı tünel ya da `lan` modu daha sağlıklıdır. Küçük tutmak için: `/apk release` (~20-40 MB, debug
+anahtarıyla imzalı) çoğu zaman Telegram sınırına sığar.
 
 ## Kubernetes
 

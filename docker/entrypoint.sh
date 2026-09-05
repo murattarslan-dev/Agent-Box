@@ -134,7 +134,8 @@ grep -qx '.agent/' "$EXCLUDE_FILE" 2>/dev/null || echo '.agent/' >> "$EXCLUDE_FI
 # ---------- 5) SDK ortamı ----------
 # /sdks/<isim>/<sürüm> (paylaşımlı volume'lar) + $SDK_HOME/<isim>/<sürüm> (container'a özel)
 # taranır, tek env.sh üretilir; BASH_ENV ile her bash'te yüklenir.
-mkdir -p "$SDK_HOME/pub-cache" "$SDK_HOME/gopath" "$SDK_HOME/npm-global"
+mkdir -p "$SDK_HOME/pub-cache" "$SDK_HOME/gopath" "$SDK_HOME/npm-global" "$SDK_HOME/gradle" "$DATA_DIR/builds" "$REPO_DIR/.agent/outbox"
+export GRADLE_USER_HOME="$SDK_HOME/gradle"
 SDK_HOME="$SDK_HOME" "$SCRIPTS_DIR/sdk-env.sh" 2>&1 | sed 's/^/[entrypoint] /' >&2 || true
 SDK_HOME="$SDK_HOME" "$SCRIPTS_DIR/sdk-env.sh" --list 2>/dev/null | sed 's/^/[entrypoint]   sdk: /' >&2 || true
 

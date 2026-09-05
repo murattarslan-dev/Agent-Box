@@ -71,6 +71,11 @@ RUN set -eux; \
     rm -rf /tmp/glab.tgz /tmp/bin; \
     glab --version
 
+# cloudflared — büyük dosyalar (APK) için hesap gerektirmeyen quick tunnel (FILE_LINKS=tunnel)
+RUN set -eux; ARCH="$(dpkg --print-architecture)"; \
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}" -o /usr/local/bin/cloudflared; \
+    chmod 0755 /usr/local/bin/cloudflared; /usr/local/bin/cloudflared --version
+
 # Ajan kullanıcısı: root DEĞİL (Claude Code root'ta bypassPermissions'ı reddeder).
 # SDK kurulumları için sudo NOPASSWD verilir (izole container varsayımı).
 RUN set -eux; \
@@ -98,6 +103,7 @@ VOLUME ["/data"]
 ENV BASH_ENV=/data/sdks/env.sh \
     PATH=/data/sdks/bin:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+EXPOSE 8787
 HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
   CMD test -f /data/.healthy || exit 1
 

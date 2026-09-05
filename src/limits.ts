@@ -32,16 +32,17 @@ export function fmtTime(ms?: number): string {
 /** Telegram için limit özeti (düz metin). */
 export function formatLimits(limits?: Record<string, LimitInfo>): string {
   if (!limits || !Object.keys(limits).length) {
-    return "Limit bilgisi henüz yok — ilk görevden sonra gelir (Claude Code her turda bildirir).";
+    return "Limit bilgisi alınamadı — token geçerli mi? (/limit tekrar dener)";
   }
   const order = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus", "seven_day_overage_included", "overage"];
   const keys = Object.keys(limits).sort((a, b) => (order.indexOf(a) + 99) - (order.indexOf(b) + 99));
   const lines = keys.map((k) => {
     const l = limits[k];
     const label = LABELS[k] ?? k;
-    const pct = l.utilization !== undefined ? `%${Math.round(l.utilization)}` : "?";
+    const u = l.utilization;
+    const pct = u !== undefined ? `%${Math.round(u)} kullanıldı · %${Math.max(0, Math.round(100 - u))} kaldı` : "doluluk bilinmiyor";
     const flag = l.status === "rejected" ? " ⛔ doldu" : l.status === "allowed_warning" ? " ⚠️" : "";
-    return `${label}: ${l.utilization !== undefined ? bar(l.utilization) + " " : ""}${pct}${flag} · sıfırlanma ${fmtTime(l.resetsAt)}`;
+    return `${label}\n  ${u !== undefined ? bar(u) + " " : ""}${pct}${flag}\n  sıfırlanma: ${fmtTime(l.resetsAt)}`;
   });
   const last = keys.map((k) => limits[k].at).sort().pop();
   return lines.join("\n") + (last ? `\n(son güncelleme ${fmtTime(new Date(last).getTime()).replace(/ \(.*\)$/, "")})` : "");

@@ -2,13 +2,16 @@
  * Telegram katmanı: yetki, komutlar, mesaj → ajan, inline-buton soru/izin akışı.
  */
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
-import { Bot, InlineKeyboard, type Context } from "grammy";
+import path from "node:path";
+import { execFileSync, spawn } from "node:child_process";
+import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import { config } from "./config.js";
 import { Agent, type AgentIO, type Question } from "./agent.js";
 import { loadState, resetState, saveState } from "./state.js";
 import { ProgressMessage, Sender, escapeHtml } from "./telegram-io.js";
 import { formatLimits } from "./limits.js";
+import { FileServer } from "./files.js";
+import { fetchUsage, refreshUsageIfStale } from "./usage.js";
 
 interface PendingQuestion {
   kind: "question";
@@ -44,12 +47,15 @@ Bir görev yaz, ajan şu akışı izler:
 /diff — çalışma ağacındaki değişiklikler
 /log — son commit'ler
 /sdk — bağlı SDK'lar
-/limit — abonelik kullanımı (5 saat / 7 gün)
+/limit — abonelik kullanımı (5 saat / 7 gün, canlı)
+/model [ad] — modeli seç (sonnet / opus / haiku / tam ad)
+/apk [debug|release] [all] [flavor X] — APK build et ve gönder (≤50 MB dosya, üstü download linki)
+/builds — son build'ler ve linkleri
 /approve — plan kapısını elle aç
 /free — kapıları tamamen aç/kapat (dikkat)
 /whoami — Telegram kullanıcı id'n`;
 
-export function createBot(agent: Agent): Bot {
+export function createBot(agent: Agent, files: FileServer): Bot {
   const bot = new Bot(config.telegramToken);
   const pending = new Map<string, PendingQuestion | PendingPermission>();
   const queue: { chatId: number; text: string }[] = [];
@@ -77,6 +83,91 @@ export function createBot(agent: Agent): Bot {
       return `git hata: ${e?.stderr ?? e?.message ?? e}`;
     }
   };
+
+  // ---------- dosya teslimi (Telegram bot sınırı 50 MB) ----------
+  const TG_FILE_LIMIT = 50 * 1024 * 1024;
+  async function sendFile(chatId: number, filePath: string, caption?: string): Promise<boolean> {
+    const name = path.basename(filePath);
+    const size = fs.statSync(filePath).size;
+    const mb = (size / 1048576).toFixed(1);
+    if (size > TG_FILE_LIMIT) {
+      const url = files.link(filePath);
+      if (url) {
+        await bot.api.sendMessage(
+          chatId,
+          `📦 <b>${escapeHtml(name)}</b> · ${mb} MB${caption ? "\n" + escapeHtml(caption) : ""}\n⬇️ <a href="${url}">İndir</a>  <i>(link ${config.linkTtlHours} sa geçerli)</i>\n<code>${escapeHtml(url)}</code>`,
+          { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+        );
+      } else {
+        await bot.api.sendMessage(chatId, `📦 ${name} (${mb} MB) Telegram'ın 50 MB sınırını aşıyor ve link üretilemedi: ${files.reason()}\nContainer'da: ${filePath}\nDaha küçük çıktı: /apk release`);
+      }
+      return Boolean(url);
+    }
+    await bot.api.sendDocument(chatId, new InputFile(filePath, name), { caption: caption ?? `${name} · ${mb} MB` });
+    return true;
+  }
+
+  /** Son build'leri linkleriyle listele. */
+  bot.command("builds", async (ctx) => {
+    const root = path.join(config.dataDir, "builds");
+    let dirs: string[] = [];
+    try {
+      dirs = fs.readdirSync(root).sort().reverse().slice(0, 8);
+    } catch {
+      /* yok */
+    }
+    if (!dirs.length) {
+      await ctx.reply("Henüz build yok. /apk ile başlat.");
+      return;
+    }
+    const lines: string[] = ["📦 <b>Son build'ler</b>"];
+    for (const d of dirs) {
+      const apks = fs.readdirSync(path.join(root, d)).filter((f) => /\.(apk|aab)$/.test(f));
+      for (const f of apks) {
+        const fp = path.join(root, d, f);
+        const mb = (fs.statSync(fp).size / 1048576).toFixed(1);
+        const url = files.link(fp);
+        lines.push(url ? `• <a href="${url}">${escapeHtml(f)}</a> · ${mb} MB` : `• ${escapeHtml(f)} · ${mb} MB (link yok: ${escapeHtml(files.reason())})`);
+      }
+    }
+    lines.push(`<i>linkler ${config.linkTtlHours} sa geçerli</i>`);
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  });
+
+  /** Ajanın .agent/outbox/ altına koyduğu dosyaları gönderir, .agent/sent/ altına taşır. */
+  let outboxBusy = false;
+  async function flushOutbox(chatId: number): Promise<number> {
+    if (outboxBusy) return 0;
+    outboxBusy = true;
+    let n = 0;
+    try {
+      const dir = path.join(config.repoDir, ".agent", "outbox");
+      const sent = path.join(config.repoDir, ".agent", "sent");
+      if (!fs.existsSync(dir)) return 0;
+      const files = fs
+        .readdirSync(dir)
+        .map((f) => path.join(dir, f))
+        .filter((f) => fs.statSync(f).isFile() && !path.basename(f).startsWith("."))
+        .sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs);
+      for (const f of files) {
+        // yazılması bitmemiş dosyayı gönderme (son 3 sn içinde değişmişse bekle)
+        if (Date.now() - fs.statSync(f).mtimeMs < 3000) continue;
+        try {
+          await sendFile(chatId, f);
+          n++;
+        } catch (e: any) {
+          await bot.api.sendMessage(chatId, `❌ ${path.basename(f)} gönderilemedi: ${e?.description ?? e?.message ?? e}`).catch(() => undefined);
+        }
+        fs.mkdirSync(sent, { recursive: true });
+        fs.renameSync(f, path.join(sent, path.basename(f)));
+      }
+    } catch {
+      /* yut */
+    } finally {
+      outboxBusy = false;
+    }
+    return n;
+  }
 
   // ---------- IO uygulaması ----------
   function makeIO(chatId: number, title: string): { io: AgentIO; progress: ProgressMessage } {
@@ -193,6 +284,17 @@ export function createBot(agent: Agent): Bot {
   // ---------- callback (buton) ----------
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
+    if (data.startsWith("model:")) {
+      const m = data.slice(6);
+      saveState({ model: m === "default" ? undefined : m });
+      await ctx.answerCallbackQuery({ text: `Model: ${m === "default" ? "varsayılan" : m}` });
+      try {
+        await ctx.editMessageText(`🧠 Model: ${m === "default" ? "varsayılan" : m} (bir sonraki turdan itibaren)`);
+      } catch {
+        /* yut */
+      }
+      return;
+    }
     const sep = data.indexOf(":");
     const id = data.slice(0, sep);
     const action = data.slice(sep + 1);
@@ -258,8 +360,10 @@ export function createBot(agent: Agent): Bot {
     const { io, progress } = makeIO(chatId, title);
     const sender = new Sender(bot, chatId);
     const typing = setInterval(() => void sender.typing(), 5000);
+    const outboxTimer = setInterval(() => void flushOutbox(chatId), 15_000);
     try {
       const r = await agent.run(text, io, { fresh: opts.fresh });
+      await flushOutbox(chatId);
       const s = loadState();
       await progress.close(
         `${r.ok ? "bitti" : "durdu"} · ${r.turns} tur · ${(r.durationMs / 1000).toFixed(0)}s · ≈$${r.costUsd.toFixed(2)} API eşd. (toplam ≈$${s.costUsd.toFixed(2)})`,
@@ -270,6 +374,7 @@ export function createBot(agent: Agent): Bot {
       await sender.sendPlain("❌ " + (e?.message ?? String(e))).catch(() => undefined);
     } finally {
       clearInterval(typing);
+      clearInterval(outboxTimer);
     }
     const next = queue.shift();
     if (next) void runPrompt(next.chatId, next.text);
@@ -305,6 +410,7 @@ export function createBot(agent: Agent): Bot {
   });
 
   bot.command("status", async (ctx) => {
+    await refreshUsageIfStale();
     const s = loadState();
     const branch = git("rev-parse", "--abbrev-ref", "HEAD").trim();
     const dirty = git("status", "--porcelain").trim();
@@ -315,7 +421,7 @@ export function createBot(agent: Agent): Bot {
         `🌿 Dal: <code>${escapeHtml(branch)}</code>${dirty ? ` · ${dirty.split("\n").length} değişik dosya` : " · temiz"}`,
         s.task ? `🎯 Görev: ${escapeHtml(s.task)}` : "🎯 Görev yok",
         s.prUrl ? `🔗 PR: ${escapeHtml(s.prUrl)}` : "",
-        `🧠 Oturum: ${s.sessionId ? s.sessionId.slice(0, 8) : "-"} · ${s.turns} tur · ≈$${s.costUsd.toFixed(2)} API eşdeğeri`,
+        `🧠 Oturum: ${s.sessionId ? s.sessionId.slice(0, 8) : "-"} · ${s.turns} tur · ≈$${s.costUsd.toFixed(2)} API eşdeğeri · model: ${s.model || config.model || "varsayılan"}`,
         s.limits && Object.keys(s.limits).length ? "📊 " + escapeHtml(formatLimits(s.limits)).split("\n").join("\n    ") : "",
         `⚙️ ${agent.busy ? "çalışıyor" : "boşta"} · kuyruk: ${queue.length} · bekleyen soru: ${pending.size}`,
       ]
@@ -376,12 +482,97 @@ export function createBot(agent: Agent): Bot {
     if (full.trim()) await sender.sendDocument("changes.diff", full, "Çalışma ağacı diff'i");
   });
 
+  let apkBusy = false;
+  bot.command("apk", async (ctx) => {
+    const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    const mode = args.find((a) => ["debug", "release", "profile"].includes(a)) ?? "debug";
+    const allAbi = args.some((a) => a === "all" || a === "--all-abi" || a === "fat");
+    const fi = args.findIndex((a) => a === "flavor" || a === "--flavor");
+    const flavor = fi >= 0 ? args[fi + 1] : undefined;
+    if (apkBusy) {
+      await ctx.reply("⏳ Zaten bir APK build'i sürüyor; bitince gelecek.");
+      return;
+    }
+    if (agent.busy) await ctx.reply("ℹ️ Ajan da çalışıyor; build paralel gidecek, biraz yavaş olabilir.");
+    apkBusy = true;
+    const chatId = ctx.chat.id;
+    const progress = new ProgressMessage(bot, chatId, `apk ${mode}${flavor ? " " + flavor : ""}${allAbi ? " (fat)" : ""}`, 12);
+    progress.push("başlıyor… (ilk seferde gradle indirir, 10-20 dk)");
+    const scriptArgs = [mode, ...(allAbi ? ["--all-abi"] : []), ...(flavor ? ["--flavor", flavor] : [])];
+    const child = spawn("/app/scripts/build-apk.sh", scriptArgs, { cwd: config.repoDir, env: process.env });
+    const apks: { file: string; size: number }[] = [];
+    const tail: string[] = [];
+    const onLine = (line: string) => {
+      const t = line.replace(/\s+$/, "");
+      if (!t.trim()) return;
+      tail.push(t);
+      if (tail.length > 25) tail.shift();
+      const m = t.match(/^APK: (\S+) (\d+)$/);
+      if (m) apks.push({ file: m[1], size: Number(m[2]) });
+      else progress.push(t.replace(/^\s+/, ""));
+    };
+    let buf = "";
+    const feed = (chunk: Buffer) => {
+      buf += chunk.toString("utf8");
+      const parts = buf.split(/\r?\n/);
+      buf = parts.pop() ?? "";
+      parts.forEach(onLine);
+    };
+    child.stdout.on("data", feed);
+    child.stderr.on("data", feed);
+    child.on("close", async (code) => {
+      if (buf) onLine(buf);
+      apkBusy = false;
+      if (code !== 0 || !apks.length) {
+        await progress.close(`hata (çıkış ${code})`);
+        await new Sender(bot, chatId).sendPlain("❌ APK build başarısız. Son satırlar:\n" + tail.slice(-15).join("\n"));
+        return;
+      }
+      // split build'de arm64 öncelikli; "all" denmediyse tek dosya gönder
+      const pick = allAbi ? apks : apks.filter((a) => /arm64/.test(a.file)).length ? apks.filter((a) => /arm64/.test(a.file)) : apks.slice(0, 1);
+      await progress.close(`bitti · ${apks.length} apk · gönderiliyor`);
+      for (const a of pick) {
+        try {
+          await sendFile(chatId, a.file, `${path.basename(a.file)} · ${(a.size / 1048576).toFixed(1)} MB · ${mode}`);
+        } catch (e: any) {
+          await bot.api.sendMessage(chatId, `❌ gönderilemedi: ${e?.description ?? e?.message ?? e}`).catch(() => undefined);
+        }
+      }
+      if (!allAbi && apks.length > pick.length) {
+        await bot.api.sendMessage(chatId, `Diğer ABI'ler container'da: ${apks.filter((a) => !pick.includes(a)).map((a) => path.basename(a.file)).join(", ")}  (hepsi için: /apk ${mode} all)`).catch(() => undefined);
+      }
+    });
+  });
+
   bot.command("limit", async (ctx) => {
+    const r = await fetchUsage();
     const s = loadState();
+    const head = r.ok ? "📊 Abonelik kullanımı (canlı)" : `📊 Abonelik kullanımı (son bilinen; canlı alınamadı: ${r.reason})`;
     await ctx.reply(
-      "📊 Abonelik kullanımı\n" + formatLimits(s.limits) +
+      head + "\n" + formatLimits(s.limits) +
         "\n\n5 saatlik pencere dolunca ajan sıfırlanmaya kadar bekler; 7 günlük dolunca hafta sonuna kadar. " +
-        "Ajan çalışırken eşik aşılırsa (%80 ve dolunca) buraya kendiliğinden uyarı gelir.",
+        "Ajan çalışırken %80'i geçince ve dolunca buraya kendiliğinden uyarı gelir.",
+    );
+  });
+
+  const MODEL_CHOICES = ["default", "sonnet", "opus", "haiku"];
+  bot.command("model", async (ctx) => {
+    const arg = (ctx.match ?? "").trim();
+    if (arg) {
+      const m = arg === "default" || arg === "varsayılan" ? undefined : arg;
+      saveState({ model: m });
+      await ctx.reply(`🧠 Model: ${m ?? "varsayılan"} (bir sonraki turdan itibaren)`);
+      return;
+    }
+    const cur = loadState().model || config.model || "varsayılan";
+    const kb = new InlineKeyboard();
+    MODEL_CHOICES.forEach((m, i) => {
+      kb.text((m === "default" ? "varsayılan" : m) + (cur === m || (m === "default" && cur === "varsayılan") ? " ✓" : ""), `model:${m}`);
+      if (i % 2 === 1) kb.row();
+    });
+    await ctx.reply(
+      `🧠 Şu anki model: ${cur}\nSeç ya da tam ad yaz: /model claude-sonnet-4-5\nsonnet = hızlı/ucuz, opus = en güçlü (limiti hızlı tüketir), haiku = en hafif.`,
+      { reply_markup: kb },
     );
   });
 

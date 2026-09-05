@@ -33,6 +33,8 @@ mkdir -p "$SDK_HOME/bin"
   echo '# Ek/özel ayarlar için: $SDK_HOME/env.local.sh'
   echo "export SDK_HOME=\"${SDK_HOME}\""
   echo 'export PATH="$SDK_HOME/bin:$PATH"'
+  echo 'export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$SDK_HOME/gradle}"'
+  echo 'export PUB_CACHE="${PUB_CACHE:-$SDK_HOME/pub-cache}"'
   for f in "${FRAGMENTS[@]}"; do
     echo "# --- $f"
     echo "[[ -f \"$f\" ]] && source \"$f\""

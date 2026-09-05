@@ -12,11 +12,14 @@ services:
       DATA_DIR: /data
     volumes:
       - ${DATA_PATH:-./data}:/data
+    # Büyük dosya linkleri (LAN modu için): PUBLIC_BASE_URL=http://<PC-LAN-IP>:8787
+    ports:
+      - "${FILE_PORT:-8787}:8787"
     # SDK kurulumları ve build'ler için makul kaynak; ihtiyaca göre değiştir
     deploy:
       resources:
         limits:
-          memory: ${MEMORY_LIMIT:-6g}
+          memory: ${MEMORY_LIMIT:-8g}
     logging:
       driver: json-file
       options:

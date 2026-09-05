@@ -111,6 +111,7 @@ function readSystemPromptAppend(): string {
     `- Kapı durumu: faz=${st.phase}, planOnayı=${st.approved ? "VAR" : "YOK"}, prOnayı=${st.prApproved ? "VAR" : "YOK"}${st.freeMode ? ", SERBEST MOD" : ""}${config.autoPr ? ", AUTO_PR açık (PR sorusu atlanır)" : ""}`,
     st.branch ? `- Aktif görev dalı: ${st.branch}` : "",
     st.task ? `- Aktif görev: ${st.task}` : "",
+    `- Model: ${st.model || config.model || "Claude Code varsayılanı"}`,
     `- Tarih: ${new Date().toISOString().slice(0, 10)}`,
   ]
     .filter(Boolean)
@@ -145,7 +146,7 @@ export class Agent {
 
     const options: Options = {
       cwd: config.repoDir,
-      model: config.model,
+      model: st.model || config.model,
       maxTurns: config.maxTurns,
       abortController: this.abort,
       settingSources: ["user", "project"],

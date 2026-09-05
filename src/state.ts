@@ -36,7 +36,9 @@ export interface AgentState {
   prUrl?: string;
   /** Toplam maliyet (USD, API eşdeğeri) — oturum boyunca. */
   costUsd: number;
-  /** Abonelik limitleri (SDK rate_limit_event): pencere → doluluk. */
+  /** Bot üzerinden seçilen model (boş = CLAUDE_MODEL / Claude Code varsayılanı). */
+  model?: string;
+  /** Abonelik limitleri (SDK rate_limit_event / usage API): pencere → doluluk. */
   limits?: Record<string, LimitInfo>;
   turns: number;
   updatedAt: string;
@@ -77,7 +79,7 @@ export function saveState(patch: Partial<AgentState> = {}): AgentState {
 
 /** Yeni görev: oturum ve kapılar sıfırlanır, freeMode korunur. */
 export function resetState(): AgentState {
-  const keepFree = loadState().freeMode;
-  cached = { ...defaults(), freeMode: keepFree };
+  const prev = loadState();
+  cached = { ...defaults(), freeMode: prev.freeMode, model: prev.model, limits: prev.limits };
   return saveState();
 }

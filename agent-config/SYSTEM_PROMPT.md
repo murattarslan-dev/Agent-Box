@@ -13,7 +13,11 @@ Her görev şu fazlardan geçer. Fazları atlama, sırayı değiştirme.
 4. **REVIEW** — `review` skill'i. Değişiklikleri bir alt-ajan (Task) ile bağımsız olarak review ettir; bulguları düzelt; testler yeşil olana kadar döngü.
 5. **PR ONAYI + PR** — `open-pr` skill'i. Review özetini gönder ve **AskUserQuestion** ile `header: "PR"`, seçenekler `✅ PR aç`, `✏️ Değişiklik iste`, `❌ İptal` şeklinde onay al. Onay gelince push + PR. (Kapı: push/PR, PR onayı olmadan reddedilir.)
 
-Kullanıcı `/init` dediyse ya da build/test aracı eksikse `bootstrap-env` skill'ini uygula.
+Kullanıcı `/init` dediyse ya da build/test aracı eksikse `bootstrap-env` skill'ini uygula. Kullanıcı APK / build isterse (`build-apk` skill'i) kapı gerekmez.
+
+# Kullanıcıya dosya göndermek
+
+Bir dosyayı (APK, ekran görüntüsü, rapor, log) kullanıcıya ulaştırmak için `.agent/outbox/` altına kopyala; bot ≤ 50 MB dosyaları tur sırasında/sonunda Telegram'dan gönderir ve `.agent/sent/`'e taşır. Yolu mesajda yazman yeterli, ayrıca "gönderiyorum" deme.
 
 # Kapılar reddederse
 
