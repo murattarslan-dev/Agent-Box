@@ -36,6 +36,10 @@ export class FileServer {
   private tunnel?: ChildProcess;
   private tunnelUrl?: string;
   private tunnelRestarts = 0;
+  private tunnelReady = false;
+  private lastCheck?: { at: number; ok: boolean; detail: string };
+  private lastErr?: string;
+  private checkTimer?: NodeJS.Timeout;
   private onDownload?: (name: string, entry: Entry) => void;
 
   constructor(private port = config.filePort) {}
@@ -46,14 +50,91 @@ export class FileServer {
     this.server = http.createServer((req, res) => this.handle(req, res));
     this.server.on("error", (e) => console.error("[files] sunucu hatası:", e.message));
     this.server.listen(this.port, "0.0.0.0", () => console.log(`[files] http :${this.port} dinliyor`));
-    if (config.fileLinks === "tunnel") this.startTunnel();
+    if (config.fileLinks === "tunnel") {
+      this.startTunnel();
+      let fails = 0;
+      this.checkTimer = setInterval(async () => {
+        if (!this.tunnelUrl) return;
+        if (await this.verify()) {
+          fails = 0;
+          if (!this.tunnelReady) {
+            this.tunnelReady = true;
+            console.log("[files] tünel tekrar erişilebilir");
+          }
+        } else if (++fails >= 2) {
+          console.warn(`[files] tünel ${fails} kez erişilemedi (${this.lastCheck?.detail}); yeniden başlatılıyor`);
+          fails = 0;
+          this.restartTunnel();
+        }
+      }, 5 * 60_000);
+    }
   }
 
   get baseUrl(): string | undefined {
     if (config.fileLinks === "off") return undefined;
     if (config.publicBaseUrl) return config.publicBaseUrl.replace(/\/+$/, "");
-    if (config.fileLinks === "tunnel") return this.tunnelUrl;
+    if (config.fileLinks === "tunnel") return this.tunnelReady ? this.tunnelUrl : undefined;
     return undefined;
+  }
+
+  /** /tunnel komutu için durum metni. */
+  status(): string {
+    const lines = [`mod: ${config.fileLinks}`, `port: ${this.port}`];
+    if (config.publicBaseUrl) lines.push(`PUBLIC_BASE_URL: ${config.publicBaseUrl}`);
+    if (config.fileLinks === "tunnel") {
+      lines.push(`cloudflared: ${this.tunnel ? "çalışıyor (pid " + this.tunnel.pid + ")" : "çalışmıyor"}`);
+      lines.push(`adres: ${this.tunnelUrl ?? "henüz yok"}`);
+      lines.push(`doğrulama: ${this.tunnelReady ? "✅ dışarıdan erişilebilir" : "❌ henüz doğrulanmadı"}`);
+      if (this.lastCheck) lines.push(`son kontrol: ${new Date(this.lastCheck.at).toISOString().slice(11, 19)}Z → ${this.lastCheck.ok ? "ok" : "hata"} ${this.lastCheck.detail}`);
+      if (this.lastErr) lines.push(`son cloudflared hatası: ${this.lastErr}`);
+      lines.push(`yeniden başlatma: ${this.tunnelRestarts}`);
+    }
+    lines.push(`aktif link: ${this.entries.size}`);
+    return lines.join("\n");
+  }
+
+  /** Tüneli dışarıdan doğrula (public URL üzerinden /_health). */
+  async verify(): Promise<boolean> {
+    const url = this.tunnelUrl;
+    if (!url) return false;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12_000);
+    try {
+      const res = await fetch(`${url}/_health`, { signal: ctrl.signal, headers: { "user-agent": "claude-telegram-agent" } });
+      const body = (await res.text()).slice(0, 60);
+      const ok = res.status === 200 && body.startsWith("ok");
+      this.lastCheck = { at: Date.now(), ok, detail: ok ? "" : `HTTP ${res.status} ${body.replace(/\s+/g, " ")}` };
+      return ok;
+    } catch (e: any) {
+      this.lastCheck = { at: Date.now(), ok: false, detail: e?.name === "AbortError" ? "zaman aşımı" : String(e?.message ?? e) };
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  /** Tüneli zorla yeniden başlat (/tunnel restart). */
+  restartTunnel() {
+    this.tunnelReady = false;
+    if (this.tunnel) this.tunnel.kill("SIGTERM");
+    else this.startTunnel();
+  }
+
+  /** Yeni URL alındığında: birkaç kez dene, başarılıysa hazır işaretle. */
+  private async verifyLoop() {
+    const url = this.tunnelUrl;
+    for (let i = 0; i < 15 && this.tunnelUrl === url; i++) {
+      await new Promise((r) => setTimeout(r, i === 0 ? 3000 : 4000));
+      if (await this.verify()) {
+        this.tunnelReady = true;
+        console.log(`[files] tünel doğrulandı: ${url}`);
+        return;
+      }
+    }
+    if (this.tunnelUrl === url) {
+      console.warn(`[files] tünel doğrulanamadı (${this.lastCheck?.detail}); cloudflared yeniden başlatılıyor`);
+      this.restartTunnel();
+    }
   }
 
   /** Kullanıcıya verilecek link; base URL yoksa undefined. */
@@ -69,7 +150,11 @@ export class FileServer {
   /** Neden link üretilemediğini açıklayan kısa metin. */
   reason(): string {
     if (config.fileLinks === "off") return "dosya linkleri kapalı (FILE_LINKS=off)";
-    if (config.fileLinks === "tunnel") return "tünel henüz hazır değil (cloudflared başlıyor ya da ağ engelli); alternatif: .env → PUBLIC_BASE_URL=http://<PC-LAN-IP>:" + this.port;
+    if (config.fileLinks === "tunnel") {
+      if (!this.tunnel) return "cloudflared çalışmıyor" + (this.lastErr ? " (" + this.lastErr + ")" : "");
+      if (!this.tunnelUrl) return "tünel adresi henüz alınmadı (cloudflared başlıyor)";
+      return `tünel adresi alındı ama dışarıdan doğrulanamadı (${this.lastCheck?.detail ?? "kontrol sürüyor"}); /tunnel ile durum, /tunnel restart ile yeniden dene`;
+    }
     return "PUBLIC_BASE_URL ayarlı değil (.env: PUBLIC_BASE_URL=http://<PC-LAN-IP>:" + this.port + ")";
   }
 
@@ -79,6 +164,10 @@ export class FileServer {
   }
 
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (req.url === "/_health") {
+      res.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store" }).end("ok " + Date.now());
+      return;
+    }
     const m = (req.url ?? "").match(/^\/d\/([a-f0-9]{32})\/[^/]+$/);
     if (!m || (req.method !== "GET" && req.method !== "HEAD")) {
       res.writeHead(404, { "content-type": "text/plain" }).end("not found");
@@ -142,10 +231,14 @@ export class FileServer {
       const m = s.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
       if (m && this.tunnelUrl !== m[0]) {
         this.tunnelUrl = m[0];
-        this.tunnelRestarts = 0;
-        console.log(`[files] tünel hazır: ${this.tunnelUrl}`);
+        this.tunnelReady = false;
+        console.log(`[files] tünel adresi alındı: ${this.tunnelUrl} — doğrulanıyor…`);
+        void this.verifyLoop();
       }
-      if (config.logLevel === "debug") process.stderr.write("[cloudflared] " + s);
+      if (/\bERR\b|error/i.test(s) && !/context canceled/.test(s)) {
+        this.lastErr = s.trim().split("\n").pop()?.slice(0, 200);
+        console.warn("[cloudflared] " + this.lastErr);
+      } else if (config.logLevel === "debug") process.stderr.write("[cloudflared] " + s);
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
@@ -153,12 +246,15 @@ export class FileServer {
       console.warn(`[files] cloudflared kapandı (kod ${code}); ${this.tunnelUrl ? "eski linkler geçersiz, " : ""}yeniden başlatılıyor`);
       this.tunnel = undefined;
       this.tunnelUrl = undefined;
+      this.tunnelReady = false;
       const delay = Math.min(60_000, 5_000 * 2 ** Math.min(this.tunnelRestarts++, 4));
       setTimeout(() => this.startTunnel(), delay);
     });
   }
 
   stop() {
+    if (this.checkTimer) clearInterval(this.checkTimer);
+    this.tunnel?.removeAllListeners("exit");
     this.tunnel?.kill("SIGTERM");
     this.server?.close();
   }

@@ -72,8 +72,9 @@ yazdıkların kuyruğa girer.
 | `/diff` · `/log` · `/sdk` | Çalışma ağacı diff'i (dosya) · son commit'ler · bağlı SDK'lar |
 | `/limit` | Abonelik kullanımı (canlı, Claude Code'un `/usage` ekranıyla aynı kaynak): 5 saatlik ve 7 günlük pencerede kullanılan/kalan yüzde, sıfırlanma saati. %80'i geçince ve dolunca bot kendiliğinden uyarır |
 | `/model [ad]` | Modeli seç: butonla varsayılan / sonnet / opus / haiku ya da tam ad (`/model claude-sonnet-4-5`); sonraki turdan itibaren |
-| `/apk [debug\|release] [all] [flavor X]` | Flutter APK build eder; ≤ 50 MB ise Telegram'dan dosya olarak, büyükse **download linki** olarak gönderir (varsayılan: debug, yalnızca arm64). Ajan da görev içinde `build-apk` skill'iyle yapabilir |
+| `/apk [small\|release\|profile\|debug] [all] [flavor X] [limit MB]` | Flutter APK build eder. Varsayılan `small`: release → profile → debug sırasıyla dener, yalnızca arm64, obfuscate + tree-shake; 50 MB altına inen ilkini Telegram'dan dosya olarak gönderir, sığmazsa en küçüğünü **download linki** ile verir ve paketi büyüten bileşenleri listeler. Ajan da görev içinde `build-apk` skill'iyle yapar ve küçültme planı önerir |
 | `/builds` | Son build'ler ve indirme linkleri |
+| `/tunnel [check\|restart]` | Download linki tünelinin durumu (adres, dışarıdan doğrulama, son hata), test linki; `restart` ile yeniden kur |
 | `/approve` | Plan kapısını buton olmadan aç |
 | `/free` | Kapıları tamamen kaldır — yalnızca deneme reposunda |
 
@@ -130,7 +131,9 @@ Telegram botları 50 MB'tan büyük dosya gönderemez; debug APK'lar kolayca 100
 içinde küçük bir HTTP sunucusu (`:8787`, süreli ve tahmin edilemez token'lı `/d/<token>/<dosya>` linkleri) barındırır
 ve varsayılan olarak **Cloudflare quick tunnel** ile dışarı açar: hesap, domain, port yönlendirme gerekmez;
 container açılışında rastgele bir `https://…trycloudflare.com` adresi alınır, link telefondan mobil veride bile
-çalışır. Linkler `LINK_TTL_HOURS` (24) saat geçerlidir; `/builds` yeni link üretir.
+çalışır. Linkler `LINK_TTL_HOURS` (24) saat geçerlidir; `/builds` yeni link üretir. Bot, tünel adresini kendisi dışarıdan
+(`/_health`) doğrulamadan link vermez, 5 dakikada bir kontrol eder ve kopmuşsa cloudflared'i yeniden başlatır;
+`/tunnel` durumu gösterir.
 
 Alternatifler (`.env`): `FILE_LINKS=lan` + `PUBLIC_BASE_URL=http://<PC-LAN-IP>:8787` (aynı Wi-Fi; Windows'ta
 `ipconfig` → IPv4), kendi domain'in / tünelin (`PUBLIC_BASE_URL=https://apk.senin.dev`), ya da `FILE_LINKS=off`.
@@ -194,6 +197,11 @@ docker build -t claude-telegram-agent . # imaj
 Kod: `src/bot.ts` (Telegram, komutlar, buton akışı) · `src/agent.ts` (Agent SDK sarmalayıcısı, hook'lar) ·
 `src/gate.ts` (faz kapısı) · `scripts/sdk-*.sh` (SDK tespit/kurulum/volume) · `docker/entrypoint.sh` (git kimliği,
 repo, env). Skill ve prompt'lar `agent-config/` altında; değişiklik container restart'ıyla yüklenir.
+
+## Repo'ya commit + push (kısayol)
+
+`commit.cmd` (Windows, çift tıkla) ya da `./commit.sh` (Mac/Linux/WSL): değişiklikleri gösterir, commit mesajı
+sorar, hepsini commit'ler ve push eder. Bu proje deposunu güncellemek için; ajanın çalıştığı hedef repo ile ilgisi yok.
 
 ## Lisans
 

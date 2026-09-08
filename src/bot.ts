@@ -49,8 +49,9 @@ Bir görev yaz, ajan şu akışı izler:
 /sdk — bağlı SDK'lar
 /limit — abonelik kullanımı (5 saat / 7 gün, canlı)
 /model [ad] — modeli seç (sonnet / opus / haiku / tam ad)
-/apk [debug|release] [all] [flavor X] — APK build et ve gönder (≤50 MB dosya, üstü download linki)
+/apk [small|release|profile|debug] [all] [flavor X] [limit MB] — en küçük APK'yı build et ve gönder (≤50 MB dosya, üstü link)
 /builds — son build'ler ve linkleri
+/tunnel [check|restart] — download linki tüneli durumu
 /approve — plan kapısını elle aç
 /free — kapıları tamamen aç/kapat (dikkat)
 /whoami — Telegram kullanıcı id'n`;
@@ -106,6 +107,23 @@ export function createBot(agent: Agent, files: FileServer): Bot {
     await bot.api.sendDocument(chatId, new InputFile(filePath, name), { caption: caption ?? `${name} · ${mb} MB` });
     return true;
   }
+
+  bot.command("tunnel", async (ctx) => {
+    const arg = (ctx.match ?? "").trim();
+    if (arg === "restart") {
+      files.restartTunnel();
+      await ctx.reply("🔁 cloudflared yeniden başlatılıyor; ~20 sn sonra /tunnel ile bak.");
+      return;
+    }
+    if (arg === "check") await files.verify();
+    const base = files.baseUrl;
+    let probe = "";
+    if (base) {
+      const url = files.link(path.join(config.dataDir, "state.json"));
+      probe = url ? `\n\nTest linki (küçük json, 24 sa): ${url}` : "";
+    }
+    await ctx.reply("🌐 Dosya linkleri\n" + files.status() + probe + "\n\nKomutlar: /tunnel check · /tunnel restart");
+  });
 
   /** Son build'leri linkleriyle listele. */
   bot.command("builds", async (ctx) => {
@@ -485,7 +503,9 @@ export function createBot(agent: Agent, files: FileServer): Bot {
   let apkBusy = false;
   bot.command("apk", async (ctx) => {
     const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
-    const mode = args.find((a) => ["debug", "release", "profile"].includes(a)) ?? "debug";
+    const mode = args.find((a) => ["small", "debug", "release", "profile"].includes(a)) ?? "small";
+    const li = args.findIndex((a) => a === "limit" || a === "--limit");
+    const limit = li >= 0 ? args[li + 1] : undefined;
     const allAbi = args.some((a) => a === "all" || a === "--all-abi" || a === "fat");
     const fi = args.findIndex((a) => a === "flavor" || a === "--flavor");
     const flavor = fi >= 0 ? args[fi + 1] : undefined;
@@ -497,18 +517,24 @@ export function createBot(agent: Agent, files: FileServer): Bot {
     apkBusy = true;
     const chatId = ctx.chat.id;
     const progress = new ProgressMessage(bot, chatId, `apk ${mode}${flavor ? " " + flavor : ""}${allAbi ? " (fat)" : ""}`, 12);
-    progress.push("başlıyor… (ilk seferde gradle indirir, 10-20 dk)");
-    const scriptArgs = [mode, ...(allAbi ? ["--all-abi"] : []), ...(flavor ? ["--flavor", flavor] : [])];
+    progress.push(mode === "small" ? "hedef ≤ 50 MB: release → profile → debug, yalnızca arm64 (ilk seferde 10-20 dk)" : "başlıyor… (ilk seferde gradle indirir, 10-20 dk)");
+    const scriptArgs = [mode, ...(allAbi ? ["--all-abi"] : []), ...(flavor ? ["--flavor", flavor] : []), ...(limit ? ["--limit", limit] : [])];
     const child = spawn("/app/scripts/build-apk.sh", scriptArgs, { cwd: config.repoDir, env: process.env });
     const apks: { file: string; size: number }[] = [];
+    const sizes: string[] = [];
+    const analyze: string[] = [];
     const tail: string[] = [];
     const onLine = (line: string) => {
       const t = line.replace(/\s+$/, "");
       if (!t.trim()) return;
       tail.push(t);
       if (tail.length > 25) tail.shift();
-      const m = t.match(/^APK: (\S+) (\d+)$/);
-      if (m) apks.push({ file: m[1], size: Number(m[2]) });
+      let m: RegExpMatchArray | null;
+      if ((m = t.match(/^APK: (\S+) (\d+)$/))) apks.push({ file: m[1], size: Number(m[2]) });
+      else if ((m = t.match(/^SIZE: \S+ (\S+) (\S+) (\S+)$/))) {
+        sizes.push(`${m[2]} ${m[1]} MB ${m[3] === "sığdı" ? "✓" : "✗"}`);
+        progress.push(`${m[2]}: ${m[1]} MB ${m[3] === "sığdı" ? "✓ sığdı" : "✗ büyük"}`);
+      } else if ((m = t.match(/^ANALYZE: (.*)$/))) analyze.push(m[1]);
       else progress.push(t.replace(/^\s+/, ""));
     };
     let buf = "";
@@ -528,18 +554,18 @@ export function createBot(agent: Agent, files: FileServer): Bot {
         await new Sender(bot, chatId).sendPlain("❌ APK build başarısız. Son satırlar:\n" + tail.slice(-15).join("\n"));
         return;
       }
-      // split build'de arm64 öncelikli; "all" denmediyse tek dosya gönder
-      const pick = allAbi ? apks : apks.filter((a) => /arm64/.test(a.file)).length ? apks.filter((a) => /arm64/.test(a.file)) : apks.slice(0, 1);
-      await progress.close(`bitti · ${apks.length} apk · gönderiliyor`);
-      for (const a of pick) {
+      await progress.close(`bitti · ${sizes.join(" · ") || apks.length + " apk"}`);
+      for (const a of apks) {
         try {
-          await sendFile(chatId, a.file, `${path.basename(a.file)} · ${(a.size / 1048576).toFixed(1)} MB · ${mode}`);
+          await sendFile(chatId, a.file, `${path.basename(a.file)} · ${(a.size / 1048576).toFixed(1)} MB${sizes.length ? " · denemeler: " + sizes.join(", ") : ""}`);
         } catch (e: any) {
           await bot.api.sendMessage(chatId, `❌ gönderilemedi: ${e?.description ?? e?.message ?? e}`).catch(() => undefined);
         }
       }
-      if (!allAbi && apks.length > pick.length) {
-        await bot.api.sendMessage(chatId, `Diğer ABI'ler container'da: ${apks.filter((a) => !pick.includes(a)).map((a) => path.basename(a.file)).join(", ")}  (hepsi için: /apk ${mode} all)`).catch(() => undefined);
+      if (analyze.length) {
+        await bot.api
+          .sendMessage(chatId, "📐 Limitin üstünde kaldı; paketi büyüten bileşenler:\n<pre>" + escapeHtml(analyze.join("\n")) + "</pre>\nKüçültme için ajana yaz: \"apk'yı küçültme planı çıkar\" (build-apk skill'i asset/eklenti önerileri sunar).", { parse_mode: "HTML" })
+          .catch(() => undefined);
       }
     });
   });

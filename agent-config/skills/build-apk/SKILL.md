@@ -1,28 +1,45 @@
 ---
 name: build-apk
-description: Flutter projesinden Android APK (debug/profile/release) build eder ve kullanıcıya Telegram'dan gönderir (.agent/outbox/ üzerinden). Kullanıcı "apk ver", "build al", "telefonda deneyeyim", "apk gönder" dediğinde ya da bir özellik bittikten sonra kullanıcı elle test etmek istediğinde kullanılır. Kapı gerektirmez (repo dosyalarına yazmaz).
+description: Flutter projesinden kullanıcının telefonuna kurabileceği EN KÜÇÜK Android APK'yı üretir ve Telegram'dan gönderir (.agent/outbox/). Hedef 50 MB altı (Telegram dosya sınırı); release → profile → debug sırasıyla dener, yalnızca arm64, obfuscate + tree-shake. Kullanıcı "apk ver", "build al", "telefonda deneyeyim" dediğinde ya da bir özellik bitince kullanılır. Repo'ya yazmaz, kapı gerektirmez; küçültme için repo değişikliği gerekiyorsa plan-and-approve ile sorar.
 ---
 
 # build-apk
 
-Amaç: kullanıcının telefonuna kurup deneyebileceği bir APK'yı en az sürtünmeyle ulaştırmak. Hazır script her şeyi yapar; sen yalnızca çağırır ve sonucu bildirirsin.
+Amaç: kullanıcının telefonuna kurup deneyebileceği paketi, **mümkünse 50 MB'ın altında** (Telegram'dan doğrudan dosya olarak gelir) ulaştırmak. Hazır script bunun için gereken her şeyi kendisi dener; sen çağırır, sonucu yorumlar, sığmadıysa bir sonraki adımı önerirsin.
+
+## Script ne yapıyor (bilmen yeterli, tekrar yapma)
+
+`/app/scripts/build-apk.sh small --outbox` sırayla **release → profile → debug** dener ve limitin altına inen ilkinde durur. Her denemede:
+- yalnızca **arm64-v8a** (`--split-per-abi --target-platform android-arm64`; x86/armeabi yok, ≈ 1/3 boyut),
+- release/profile'da `--obfuscate --split-debug-info` (Dart sembolleri APK'dan çıkar, `symbols/` dizininde saklanır) ve `--tree-shake-icons`,
+- Flutter'ın varsayılan R8 küçültmesi (release'de açık),
+- imza: release/profile, proje kendi anahtarını istemiyorsa Flutter'ın debug anahtarıyla imzalanır → telefona **kurulabilir** (mağazaya gitmez).
+Hiçbiri sığmazsa en küçüğünü `APK:` ile verir ve `ANALYZE:` satırlarında paketin içindeki en büyük bileşenleri (lib/, assets/, res/, en büyük 8 dosya) basar.
 
 ## Adımlar
 
-1. **Dal kontrolü** — hangi daldan build alındığını kullanıcıya söyleyeceksin: `git rev-parse --abbrev-ref HEAD` ve `git status --porcelain | head` (commit'lenmemiş değişiklik varsa build'e girer; bunu belirt).
+1. **Bağlam** — `git rev-parse --abbrev-ref HEAD`, `git status --porcelain | head`; commit'lenmemiş değişiklik varsa build'e gireceğini belirt.
 
-2. **Build + teslim** (tek komut, `run_in_background` ile başlat, `BashOutput` ile izle; ilk seferde 10-20 dk):
+2. **Build** — `run_in_background` ile başlat, `BashOutput` ile izle (ilk seferde gradle indirir, 10-20 dk; sonraki ~3-5 dk):
    ```bash
-   /app/scripts/build-apk.sh debug --outbox 2>&1 | tail -40
+   /app/scripts/build-apk.sh small --outbox 2>&1 | tail -60
    ```
-   - Kullanıcı "release" dediyse `release`; cihazı bilinmiyorsa varsayılan `debug` + split-per-abi (arm64 gönderilir, ~30-45 MB).
-   - Tek fat APK isteniyorsa `--all-abi` (büyük olur; Telegram 50 MB sınırını aşarsa gönderilemez — o zaman `release` dene).
-   - Flavor'lu projede `--flavor <ad>`; flavor adlarını `android/app/build.gradle*`'dan oku.
+   Kullanıcı açıkça "debug apk" derse `debug`, "release" derse `release`. Flavor'lu projede `--flavor <ad>` (adları `android/app/build.gradle*`'dan oku). Farklı limit: `--limit 100`.
 
-3. **Sonuç** — script her çıktı için `APK: <yol> <bayt>` basar ve `--outbox` ile dosyayı `.agent/outbox/`'a koyar. Bot, tur sırasında/sonunda outbox'taki dosyaları Telegram'dan gönderir (≤ 50 MB dosya olarak, büyükler süreli download linki olarak) ve `.agent/sent/`'e taşır; senin ayrıca bir şey yapman gerekmez. Kullanıcıya kısa özet yaz: dal, commit, mod, ABI, boyut, "dosya birazdan geliyor".
+3. **Sonucu bildir** (≤ 8 satır): dal + commit, hangi mod sığdı, boyut, "dosya birazdan geliyor" (outbox'ı bot gönderir; > 50 MB ise link olarak gelir). `SIZE:` satırlarındaki denemeleri tek satırda özetle: "release 38 MB ✓ (profile/debug denenmedi)".
 
-4. **Hata varsa** — build çıktısının son 30 satırını oku; tipik sebepler: eksik `local.properties` (script `ANDROID_HOME`'u env'den alır, gerekmez), Gradle/AGP sürüm uyumsuzluğu (JDK 17 bağlı; `.agent/ENV.md`'ye bak), `flutter pub get` çözümleme hatası. Küçük ve kesin bir düzeltmeyse (ör. `gradle-wrapper.properties` sürümü) **plan onayı gerektirir**: `plan-and-approve` ile sor, sonra düzelt.
+4. **Sığmadıysa** — `ANALYZE:` çıktısını oku ve kullanıcıya **neyin büyük olduğunu** söyle, sonra AskUserQuestion (header: "APK") ile seçenek sun:
+   - `📦 Link ile gönder` — bot zaten link üretmiştir; ek iş yok.
+   - `✂️ Küçültme planı` — repo'da değişiklik gerektirir → `plan-and-approve` ile onay al, sonra uygula. Tipik kazançlar (büyükten küçüğe):
+     - `assets/`: PNG → WebP (`cwebp -q 80`), gereksiz çözünürlük/asset'ler, büyük JSON/lottie'ler; fontlarda yalnızca kullanılan ağırlıklar (`fonts:` listesi), Google Fonts'u runtime'a alma.
+     - `lib/arm64-v8a/`: büyük native kütüphaneler (ör. `libflutter.so` normaldir; ML/DB/ffmpeg gibi eklentiler asıl ağırlıktır) — kullanılmayan eklentileri `pubspec.yaml`'dan çıkar; `flutter pub deps` ile kimin getirdiğine bak.
+     - `res/`: Android tarafı drawable'lar, `android/app/src/main/res/` altında xxxhdpi fazlalıkları.
+     - `android/app/build.gradle*`: release'de `minifyEnabled true` + `shrinkResources true` (R8) ve `ndk { debugSymbolLevel 'none' }`; `abiFilters` ile tek ABI (script zaten yapıyor).
+     - Son çare: `flutter build apk --analyze-size --target-platform android-arm64` ile ayrıntılı rapor.
+   - `🐛 Debug olsun` — mod ne olursa olsun `debug --limit 9999` (büyük, link ile).
+
+5. **Hata varsa** — build çıktısının son 30 satırı: `key.properties`/keystore isteyen release yapılandırması (script otomatik profile'a düşer; kalıcı çözüm için release'de debug imzasına izin veren değişiklik önerebilirsin — onay gerekir), Gradle/AGP–JDK uyumsuzluğu (JDK 17 bağlı), `pub get` çözümleme hatası. Küçük ve kesin bir düzeltme bile **plan onayı** gerektirir.
 
 ## Outbox kuralı (genel)
 
-Kullanıcıya göndermek istediğin **her dosya** (APK, ekran görüntüsü, rapor, log) için `.agent/outbox/` altına kopyala; ≤ 50 MB olanlar tur sonunda otomatik gider, büyükler için yol ve boyut bildirilir. Dosya adı anlamlı olsun (`hanio-debug-arm64-3f2a1c.apk`, `login-screen.png`).
+Kullanıcıya göndermek istediğin her dosya (APK, ekran görüntüsü, rapor, log) için `.agent/outbox/` altına kopyala; ≤ 50 MB olanlar tur sırasında dosya olarak, büyükler süreli download linki olarak gider. Dosya adı anlamlı olsun (`hanio-release-arm64-v8a-3f2a1c.apk`, `login-screen.png`).

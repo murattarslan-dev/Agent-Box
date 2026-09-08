@@ -37,6 +37,7 @@ async function main() {
     { command: "model", description: "Modeli seç" },
     { command: "apk", description: "APK build et ve gönder" },
     { command: "builds", description: "Son build'ler ve linkleri" },
+    { command: "tunnel", description: "Link tüneli durumu" },
     { command: "approve", description: "Plan kapısını aç" },
     { command: "free", description: "Serbest modu aç/kapat" },
     { command: "help", description: "Yardım" },
