@@ -39,6 +39,7 @@ Bir görev yaz, ajan şu akışı izler:
 
 <b>Komutlar</b>
 /new [görev] — yeni oturum (kapılar sıfırlanır)
+/quick [görev] — hızlı mod: analiz + alt-ajan review yok (typo, config, tek dosya)
 /status — faz, dal, maliyet
 /cancel — çalışan işi durdur
 /init — repo'yu analiz edip eksik SDK'ları kur (bootstrap-env)
@@ -49,6 +50,8 @@ Bir görev yaz, ajan şu akışı izler:
 /sdk — bağlı SDK'lar
 /limit — abonelik kullanımı (5 saat / 7 gün, canlı)
 /model [ad] — modeli seç (sonnet / opus / haiku / tam ad)
+/test /lint /build /format /doctor — repo görevini Claude'suz çalıştır (.agent-tasks ya da varsayılan); hata olursa "ajana düzelttir" butonu
+/task [ad] — görev listesi / özel görev
 /apk [small|release|profile|debug] [all] [flavor X] [limit MB] — en küçük APK'yı build et ve gönder (≤50 MB dosya, üstü link)
 /builds — son build'ler ve linkleri
 /tunnel [check|restart] — download linki tüneli durumu
@@ -302,6 +305,30 @@ export function createBot(agent: Agent, files: FileServer): Bot {
   // ---------- callback (buton) ----------
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
+    if (data.startsWith("fix:") || data.startsWith("log:")) {
+      const id = data.slice(4);
+      const f = failFixes.get(id);
+      if (!f) {
+        await ctx.answerCallbackQuery({ text: "Bu kayıt artık yok." });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      if (data.startsWith("log:")) {
+        try {
+          await sendFile(ctx.chat!.id, f.log, `${f.task} tam log`);
+        } catch (e: any) {
+          await ctx.reply("log gönderilemedi: " + (e?.message ?? e));
+        }
+        return;
+      }
+      failFixes.delete(id);
+      void runPrompt(
+        ctx.chat!.id,
+        `\`${f.task}\` görevi başarısız oldu (çıkış kodu ${f.code}). Komut: /app/scripts/run-task.sh ${f.task}\nSon satırlar:\n\`\`\`\n${f.tail}\n\`\`\`\nTam log: ${f.log} (gerekirse \`tail -n 200 ${f.log}\`). Sebebi bul, düzelt (repo değişikliği plan onayı gerektirir), sonra aynı komutla doğrula.`,
+        { title: `${f.task} düzelt` },
+      );
+      return;
+    }
     if (data.startsWith("model:")) {
       const m = data.slice(6);
       saveState({ model: m === "default" ? undefined : m });
@@ -383,8 +410,13 @@ export function createBot(agent: Agent, files: FileServer): Bot {
       const r = await agent.run(text, io, { fresh: opts.fresh });
       await flushOutbox(chatId);
       const s = loadState();
+      const k = (n: number) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
+      const tk = r.tokens;
+      const tokLine = tk
+        ? ` · ${k(tk.input + tk.cacheRead + tk.cacheWrite)} giriş (${tk.input + tk.cacheRead + tk.cacheWrite ? Math.round((100 * tk.cacheRead) / (tk.input + tk.cacheRead + tk.cacheWrite)) : 0}% cache) / ${k(tk.output)} çıkış`
+        : "";
       await progress.close(
-        `${r.ok ? "bitti" : "durdu"} · ${r.turns} tur · ${(r.durationMs / 1000).toFixed(0)}s · ≈$${r.costUsd.toFixed(2)} API eşd. (toplam ≈$${s.costUsd.toFixed(2)})`,
+        `${r.ok ? "bitti" : "durdu"} · ${r.turns} tur · ${(r.durationMs / 1000).toFixed(0)}s${tokLine} · ≈$${r.costUsd.toFixed(2)} (toplam ≈$${s.costUsd.toFixed(2)})`,
       );
       if (!r.ok) await sender.sendPlain(`⚠️ ${r.summary}`);
     } catch (e: any) {
@@ -427,6 +459,25 @@ export function createBot(agent: Agent, files: FileServer): Bot {
     }
   });
 
+  bot.command("quick", async (ctx) => {
+    const task = (ctx.match ?? "").trim();
+    if (agent.busy) {
+      await ctx.reply("Önce /cancel ile çalışan işi durdur.");
+      return;
+    }
+    if (!task) {
+      const s = saveState({ quick: !loadState().quick });
+      await ctx.reply(s.quick ? "⚡ Hızlı mod açık: analiz ve alt-ajan review atlanır (küçük işler). Görevi yaz." : "Hızlı mod kapalı.");
+      return;
+    }
+    cancelPending();
+    queue.length = 0;
+    resetState();
+    saveState({ quick: true });
+    await ctx.reply("⚡ Hızlı mod · yeni oturum. Başlıyor…");
+    void runPrompt(ctx.chat.id, task, { fresh: true });
+  });
+
   bot.command("status", async (ctx) => {
     await refreshUsageIfStale();
     const s = loadState();
@@ -434,12 +485,13 @@ export function createBot(agent: Agent, files: FileServer): Bot {
     const dirty = git("status", "--porcelain").trim();
     await ctx.reply(
       [
-        `📍 <b>Faz:</b> ${s.phase}${s.freeMode ? " (SERBEST MOD)" : ""}`,
+        `📍 <b>Faz:</b> ${s.phase}${s.freeMode ? " (SERBEST MOD)" : ""}${s.quick ? " ⚡hızlı" : ""}`,
         `🔐 Plan onayı: ${s.approved ? "✅" : "❌"} · PR onayı: ${s.prApproved ? "✅" : "❌"}`,
         `🌿 Dal: <code>${escapeHtml(branch)}</code>${dirty ? ` · ${dirty.split("\n").length} değişik dosya` : " · temiz"}`,
         s.task ? `🎯 Görev: ${escapeHtml(s.task)}` : "🎯 Görev yok",
         s.prUrl ? `🔗 PR: ${escapeHtml(s.prUrl)}` : "",
         `🧠 Oturum: ${s.sessionId ? s.sessionId.slice(0, 8) : "-"} · ${s.turns} tur · ≈$${s.costUsd.toFixed(2)} API eşdeğeri · model: ${s.model || config.model || "varsayılan"}`,
+        s.tokens ? `🔢 Token: ${Math.round((s.tokens.input + s.tokens.cacheRead + s.tokens.cacheWrite) / 1000)}k giriş (${s.tokens.input + s.tokens.cacheRead + s.tokens.cacheWrite ? Math.round((100 * s.tokens.cacheRead) / (s.tokens.input + s.tokens.cacheRead + s.tokens.cacheWrite)) : 0}% cache) · ${Math.round(s.tokens.output / 1000)}k çıkış` : "",
         s.limits && Object.keys(s.limits).length ? "📊 " + escapeHtml(formatLimits(s.limits)).split("\n").join("\n    ") : "",
         `⚙️ ${agent.busy ? "çalışıyor" : "boşta"} · kuyruk: ${queue.length} · bekleyen soru: ${pending.size}`,
       ]
@@ -498,6 +550,74 @@ export function createBot(agent: Agent, files: FileServer): Bot {
     const sender = new Sender(bot, ctx.chat.id);
     await sender.sendMarkdown(stat.trim() ? "```\n" + stat + "\n```" : "Değişiklik yok.");
     if (full.trim()) await sender.sendDocument("changes.diff", full, "Çalışma ağacı diff'i");
+  });
+
+  // ---------- deterministik görevler: /test /lint /build /format /doctor /task <ad> (Claude çalışmaz) ----------
+  let taskBusy = false;
+  const failFixes = new Map<string, { task: string; tail: string; log: string; code: number }>();
+  async function runTask(chatId: number, task: string, extra: string[] = []) {
+    if (taskBusy) {
+      await bot.api.sendMessage(chatId, "⏳ Başka bir görev sürüyor; bitince dene.");
+      return;
+    }
+    taskBusy = true;
+    const progress = new ProgressMessage(bot, chatId, `${task}${extra.length ? " " + extra.join(" ") : ""}`, 14);
+    const child = spawn("/app/scripts/run-task.sh", [task, ...extra], { cwd: config.repoDir, env: { ...process.env, TASK_TAIL: "60" } });
+    const tail: string[] = [];
+    let summary: RegExpMatchArray | null = null;
+    let buf = "";
+    const feed = (chunk: Buffer) => {
+      buf += chunk.toString("utf8");
+      const parts = buf.split(/\r?\n/);
+      buf = parts.pop() ?? "";
+      for (const line of parts) {
+        const t = line.replace(/\s+$/, "");
+        if (!t.trim()) continue;
+        const m = t.match(/^TASK: (\S+) (ok|fail) (\d+) (\S+)(?: \((\d+)s\))?$/);
+        if (m) {
+          summary = m;
+          continue;
+        }
+        tail.push(t);
+        if (tail.length > 60) tail.shift();
+        if (!t.startsWith("[task]")) progress.push(t.replace(/^\s+/, ""));
+        else progress.push(t);
+      }
+    };
+    child.stdout.on("data", feed);
+    child.stderr.on("data", feed);
+    child.on("close", async (code) => {
+      taskBusy = false;
+      const ok = code === 0;
+      const dur = summary?.[5] ? ` · ${summary[5]}s` : "";
+      await progress.close(ok ? `✅ ${task} geçti${dur}` : `❌ ${task} başarısız (kod ${code})${dur}`);
+      if (ok) return;
+      const id = `f${++seq}`;
+      const log = summary?.[4] ?? "-";
+      failFixes.set(id, { task, tail: tail.slice(-40).join("\n"), log, code: code ?? 1 });
+      const kb = new InlineKeyboard().text("🤖 Ajana düzelttir", `fix:${id}`).text("📄 Tam log", `log:${id}`);
+      await bot.api.sendMessage(chatId, `<b>${escapeHtml(task)}</b> başarısız. Son satırlar:\n<pre>${escapeHtml(tail.slice(-15).join("\n"))}</pre>`, {
+        parse_mode: "HTML",
+        reply_markup: kb,
+      });
+    });
+  }
+  for (const t of ["test", "lint", "build", "format", "doctor", "deps"]) {
+    bot.command(t, (ctx) => runTask(ctx.chat.id, t, (ctx.match ?? "").trim().split(/\s+/).filter(Boolean)));
+  }
+  bot.command("task", async (ctx) => {
+    const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    if (!args.length) {
+      let list = "";
+      try {
+        list = execFileSync("/app/scripts/run-task.sh", ["--list"], { encoding: "utf8", cwd: config.repoDir, env: process.env });
+      } catch (e: any) {
+        list = String(e?.stdout ?? e?.message ?? e);
+      }
+      await ctx.reply(`<pre>${escapeHtml(list.trim())}</pre>\nKullanım: /task &lt;ad&gt; · repo köküne .agent-tasks ile özelleştir ("ad: komut")`, { parse_mode: "HTML" });
+      return;
+    }
+    await runTask(ctx.chat.id, args[0], args.slice(1));
   });
 
   let apkBusy = false;

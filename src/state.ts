@@ -38,6 +38,10 @@ export interface AgentState {
   costUsd: number;
   /** Bot üzerinden seçilen model (boş = CLAUDE_MODEL / Claude Code varsayılanı). */
   model?: string;
+  /** Hızlı mod: analiz + alt-ajan review atlanır (küçük işler). */
+  quick?: boolean;
+  /** Oturum boyunca token toplamları. */
+  tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** Abonelik limitleri (SDK rate_limit_event / usage API): pencere → doluluk. */
   limits?: Record<string, LimitInfo>;
   turns: number;

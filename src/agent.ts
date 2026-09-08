@@ -8,6 +8,7 @@ import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent
 import { config } from "./config.js";
 import { loadState, saveState } from "./state.js";
 import * as gate from "./gate.js";
+import { trimCommand } from "./trim.js";
 
 export interface QuestionOption {
   label: string;
@@ -36,6 +37,7 @@ export interface RunResult {
   costUsd: number;
   turns: number;
   durationMs: number;
+  tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 const ALLOWED_TOOLS = [
@@ -111,7 +113,11 @@ function readSystemPromptAppend(): string {
     `- Kapı durumu: faz=${st.phase}, planOnayı=${st.approved ? "VAR" : "YOK"}, prOnayı=${st.prApproved ? "VAR" : "YOK"}${st.freeMode ? ", SERBEST MOD" : ""}${config.autoPr ? ", AUTO_PR açık (PR sorusu atlanır)" : ""}`,
     st.branch ? `- Aktif görev dalı: ${st.branch}` : "",
     st.task ? `- Aktif görev: ${st.task}` : "",
-    `- Model: ${st.model || config.model || "Claude Code varsayılanı"}`,
+    `- Model: ${st.model || config.model || "Claude Code varsayılanı"} · alt-ajanlar: reviewer=${config.modelReview}, explorer=${config.modelExplore}`,
+    `- Bash çıktıları: gürültülü komutlar (build/test/paket) otomatik kırpılır, son ${config.bashTailLines} satır gösterilir; tam log yolu çıktının başında yazar (${config.logDir}). Deterministik görevler için /app/scripts/run-task.sh test|lint|build|format.`,
+    st.quick
+      ? "- ⚡ HIZLI MOD: analyze-architecture ve review alt-ajanını ATLA. Akış: en fazla 3 dosyaya bak → 3 maddelik plan + AskUserQuestion(header \"Onay\") → uygula → run-task test/lint → kendin 5 satırlık kontrol → AskUserQuestion(header \"PR\"). Küçük, tek amaçlı bir iş için kullanılıyor; kapsam genişletme."
+      : "",
     `- Tarih: ${new Date().toISOString().slice(0, 10)}`,
   ]
     .filter(Boolean)
@@ -156,6 +162,24 @@ export class Agent {
       includePartialMessages: false,
       resume: opts.fresh ? undefined : st.sessionId,
       env: { ...process.env },
+      agents: {
+        explorer: {
+          description:
+            "Repo keşfi: çok dosya okuyup KISA yapılandırılmış özet döndürür (mimari, dizinler, ilgili dosyalar, örnek kalıp). Analiz fazında, 5+ dosya okumak gerektiğinde kullanılır; salt-okunur.",
+          prompt:
+            "Sen bir kod keşif ajanısın. Verilen soruya cevap için gereken dosyaları oku; cevabını EN FAZLA 40 satır, başlıklı ve dosya yollu bir özet olarak ver. Kod bloğu kopyalama; yalnızca yol:satır ve 1 cümle açıklama. Kanıtsız iddia yok.",
+          tools: ["Read", "Glob", "Grep", "LS", "Bash"],
+          model: config.modelExplore as any,
+        },
+        reviewer: {
+          description:
+            "Bağımsız kod review'ı: .agent/PLAN.md hedefine göre .agent/review.diff'i değerlendirir, önem etiketli bulgular ve KARAR verir. Kod yazmaz. review fazında kullanılır.",
+          prompt:
+            "Sen kıdemli bir reviewer'sın. .agent/PLAN.md ve .agent/review.diff'i oku; gerekirse ilgili dosyalara bak. KOD YAZMA. Başlıklar: doğruluk, plan uyumu, mimari uyum, güvenlik, test, okunabilirlik. Her bulgu: [kritik|yüksek|orta|düşük] dosya:satır — ne, neden. Bulgu yoksa uydurma. En fazla 60 satır. Sonda tek satır: KARAR: GEÇTİ ya da KARAR: DÜZELTME GEREKLİ (kritik/yüksek varsa GEÇTİ olamaz).",
+          tools: ["Read", "Glob", "Grep", "LS", "Bash"],
+          model: config.modelReview as any,
+        },
+      },
       stderr: (d: string) => {
         if (config.logLevel === "debug") process.stderr.write("[claude] " + d);
       },
@@ -186,7 +210,18 @@ export class Agent {
               async (hookInput) => {
                 if (hookInput.hook_event_name !== "PreToolUse") return {};
                 const d = gate.decide(hookInput.tool_name, (hookInput.tool_input ?? {}) as Record<string, unknown>);
-                if (d.allow) return {};
+                if (d.allow) {
+                  // gürültülü Bash komutlarını kırp (token tasarrufu)
+                  if (hookInput.tool_name === "Bash") {
+                    const inp = (hookInput.tool_input ?? {}) as Record<string, unknown>;
+                    const t = trimCommand(String(inp.command ?? ""));
+                    if (t.wrapped) {
+                      io.progress(`✂️ çıktı kırpılıyor (son ${config.bashTailLines} satır)`);
+                      return { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { ...inp, command: t.command } } };
+                    }
+                  }
+                  return {};
+                }
                 io.progress(`⛔ ${hookInput.tool_name} engellendi (kapı)`);
                 return {
                   hookSpecificOutput: {
@@ -245,8 +280,26 @@ export class Agent {
               result.summary += `\n⛔ Abonelik limiti dolu (${rejected[0]}); sıfırlanma ${fmtTime(rejected[1].resetsAt)}. O saatten sonra "devam et" yaz.`;
             }
           }
+          const u = r.usage ?? {};
+          result.tokens = {
+            input: u.input_tokens ?? 0,
+            output: u.output_tokens ?? 0,
+            cacheRead: u.cache_read_input_tokens ?? 0,
+            cacheWrite: u.cache_creation_input_tokens ?? 0,
+          };
           const s = loadState();
-          saveState({ costUsd: s.costUsd + result.costUsd, turns: s.turns + result.turns, sessionId: r.session_id ?? s.sessionId });
+          const tk = s.tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+          saveState({
+            costUsd: s.costUsd + result.costUsd,
+            turns: s.turns + result.turns,
+            sessionId: r.session_id ?? s.sessionId,
+            tokens: {
+              input: tk.input + result.tokens.input,
+              output: tk.output + result.tokens.output,
+              cacheRead: tk.cacheRead + result.tokens.cacheRead,
+              cacheWrite: tk.cacheWrite + result.tokens.cacheWrite,
+            },
+          });
         }
       }
     } catch (e: any) {

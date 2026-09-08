@@ -18,7 +18,7 @@ description: Onaylanmış planı agent/<slug> dalında küçük commit'lerle uyg
 
 2. **Plandaki adımları sırayla uygula.** Her adımda:
    - Örnek alınan mevcut kalıbı (ANALYSIS.md'deki) birebir takip et: adlandırma, dizin, hata yönetimi, loglama.
-   - Adım bitince ilgili testi/derlemeyi çalıştır (`| tail -40`). Kırmızıysa düzelt, sonra ilerle.
+   - Adım bitince ilgili testi/derlemeyi çalıştır: `/app/scripts/run-task.sh test` (ya da `lint`, `build`, `format`; komutlar repo'daki `.agent-tasks`'tan, yoksa proje türüne göre) — çıktı kırpılır, tam log `/data/logs/…`. Tek bir test dosyası için `run-task.sh test test/x_test.dart`. Kırmızıysa düzelt, sonra ilerle. Gürültülü komutları elle çalıştırsan da bot çıktıyı otomatik kırpar; log yolunu çıktının başında görürsün.
    - Anlamlı bir birim tamamlanınca commit at:
      ```bash
      git add -A -- ':!.agent' && git commit -m "<type>(<scope>): <imperative summary>"
@@ -29,7 +29,7 @@ description: Onaylanmış planı agent/<slug> dalında küçük commit'lerle uyg
 3. **Test ve kalite**
    - Yeni davranış için test ekle; mevcut test komutunu kullan (ANALYSIS.md).
    - Lint/format aracı varsa çalıştır (`dart format`, `gofmt`, `eslint --fix`, `ktlint` vb.) — yalnızca dokunduğun dosyalar.
-   - Tüm test paketini en az bir kez tam çalıştır.
+   - Tüm test paketini en az bir kez tam çalıştır (`run-task.sh test`); lint/format da (`run-task.sh lint`, `run-task.sh format`).
 
 4. **Plan dışına çıkma**
    - Planda olmayan bir değişiklik gerekiyorsa ve küçükse (≤ 1 dosya, davranış değişmiyor) yap ve PLAN.md'ye "Ek:" olarak not düş.

@@ -25,6 +25,7 @@ async function main() {
 
   await bot.api.setMyCommands([
     { command: "new", description: "Yeni oturum / görev" },
+    { command: "quick", description: "Hızlı mod (küçük işler)" },
     { command: "status", description: "Durum" },
     { command: "cancel", description: "Çalışan işi durdur" },
     { command: "init", description: "Ortamı kur (SDK'lar)" },
@@ -35,6 +36,10 @@ async function main() {
     { command: "sdk", description: "Bağlı SDK'lar" },
     { command: "limit", description: "Abonelik kullanımı" },
     { command: "model", description: "Modeli seç" },
+    { command: "test", description: "Testleri çalıştır (Claude'suz)" },
+    { command: "lint", description: "Lint (Claude'suz)" },
+    { command: "build", description: "Build (Claude'suz)" },
+    { command: "task", description: "Görev listesi / özel görev" },
     { command: "apk", description: "APK build et ve gönder" },
     { command: "builds", description: "Son build'ler ve linkleri" },
     { command: "tunnel", description: "Link tüneli durumu" },

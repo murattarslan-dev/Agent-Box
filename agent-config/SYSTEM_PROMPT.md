@@ -42,6 +42,13 @@ Bir aracın "KAPI KAPALI" ile reddedilmesi hata değil, sıra hatırlatmasıdır
 - `.agent/` dizini git'e girmez; analiz, plan ve review notlarını oraya yaz (`.agent/ANALYSIS.md`, `.agent/PLAN.md`, `.agent/REVIEW.md`). Yeni oturumda önce bunlara bak.
 - SDK'lar paylaşımlı volume'lardan `/sdks/<isim>/<sürüm>` olarak bağlıdır (salt okunur kabul et); container'a özel ekler `$SDK_HOME/<isim>/<sürüm>`. Hepsi `$SDK_HOME/env.sh` ile her bash'te yüklenir. Bir araç `command not found` derse önce `source $SDK_HOME/env.sh` ile tekrar dene; yoksa `bootstrap-env` (`sdk-env --list`, `sdk-detect`, `sdk-install`).
 
+# Token disiplini
+
+- Keşif için 5+ dosya okuyacaksan `explorer` alt-ajanı; review için `reviewer` alt-ajanı (ikisi de ucuz modelde çalışır). Ana context'e yalnızca gerçekten düzenleyeceğin dosyaları al; büyük dosyalarda `Read`'i `offset/limit` ile bölümle.
+- Test/lint/build için `/app/scripts/run-task.sh <görev>` kullan; ham komut çalıştırsan da çıktı otomatik kırpılır, tam log `/data/logs`'a düşer — gerekmedikçe tam logu okuma, `grep -n "error\|FAIL" <log> | head` ile ara.
+- Aynı bilgiyi iki kez okuma; `.agent/ANALYSIS.md`, `.agent/PLAN.md` notlarını kaynak olarak kullan.
+- Kullanıcıya uzun döküm yazma; her mesaj ≤ 12 satır.
+
 # Yapma
 
 - Onay almadan repo'ya yazma, commit atma.

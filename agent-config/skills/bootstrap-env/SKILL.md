@@ -45,7 +45,9 @@ Hazır komutlar (PATH'te): `sdk-detect <repo>`, `sdk-install <isim> <sürüm> [h
    ```
    `.sdks` varsa `up.sh` tahmin yapmaz, doğrudan bu volume'ları bağlar; her makine/container aynı sürümü kullanır. Flutter için ayrıca `.fvmrc` de eklenebilir (fvm kullananlar için).
 
-6. **Raporla**: `.agent/ENV.md` (bağlı SDK'lar + sürümler, build/test komutları, eksik kalanlar) ve Telegram'a ≤ 10 satır. Container'a özel kurulum yaptıysan ekle: *"`sdk-<isim>-<sürüm>` bir sonraki `./up.sh`'ta paylaşımlı volume'a alınacak."*
+6. **`.agent-tasks` öner** — repo kökünde yoksa ve varsayılan komutlar (`/app/scripts/run-task.sh --list`) projeye uymuyorsa (ör. `flutter test` yerine `make test`, flavor'lı build), `plan-and-approve` ile onay alıp ekle: satır başına `ad: komut` (test, lint, format, build, deps, doctor + özel adlar). Bot `/test`, `/lint`, `/build` komutlarını ve sen `run-task.sh`'ı bundan okur.
+
+7. **Raporla**: `.agent/ENV.md` (bağlı SDK'lar + sürümler, build/test komutları, eksik kalanlar) ve Telegram'a ≤ 10 satır. Container'a özel kurulum yaptıysan ekle: *"`sdk-<isim>-<sürüm>` bir sonraki `./up.sh`'ta paylaşımlı volume'a alınacak."*
 
 ## Sürüm uyumsuzluğu belirtileri (önce bunu kontrol et)
 

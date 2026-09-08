@@ -35,6 +35,12 @@ export const config = {
   agentConfigDir: process.env.AGENT_CONFIG_DIR ?? "/app/agent-config",
 
   model: process.env.CLAUDE_MODEL || undefined,
+  /** Faz bazlı modeller (token tasarrufu): alt-ajanlar için */
+  modelReview: process.env.MODEL_REVIEW || "sonnet",
+  modelExplore: process.env.MODEL_EXPLORE || "haiku",
+  /** Gürültülü Bash çıktılarında modele gösterilecek son satır sayısı (0 = kapalı) */
+  bashTailLines: Number(process.env.BASH_TAIL_LINES ?? 80),
+  logDir: process.env.LOG_DIR ?? "/data/logs",
   maxTurns: Number(process.env.MAX_TURNS ?? 400),
   /** PR açma sorusunu atla: review geçtiyse doğrudan PR aç. */
   autoPr: bool("AUTO_PR", false),

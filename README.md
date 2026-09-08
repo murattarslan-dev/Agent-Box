@@ -72,6 +72,9 @@ yazdıkların kuyruğa girer.
 | `/diff` · `/log` · `/sdk` | Çalışma ağacı diff'i (dosya) · son commit'ler · bağlı SDK'lar |
 | `/limit` | Abonelik kullanımı (canlı, Claude Code'un `/usage` ekranıyla aynı kaynak): 5 saatlik ve 7 günlük pencerede kullanılan/kalan yüzde, sıfırlanma saati. %80'i geçince ve dolunca bot kendiliğinden uyarır |
 | `/model [ad]` | Modeli seç: butonla varsayılan / sonnet / opus / haiku ya da tam ad (`/model claude-sonnet-4-5`); sonraki turdan itibaren |
+| `/quick [görev]` | Hızlı mod: analiz ve alt-ajan review atlanır, plan onayı kalır — typo/config/tek dosya işleri için 5-10 kat ucuz |
+| `/test` · `/lint` · `/build` · `/format` · `/doctor` · `/deps` | Repo görevini **Claude çalıştırmadan** koşar (`.agent-tasks` ya da proje türüne göre varsayılan); yeşilse özet, kırmızıysa son satırlar + "🤖 Ajana düzelttir" butonu |
+| `/task [ad]` | Görev listesi / `.agent-tasks`'taki özel görev |
 | `/apk [small\|release\|profile\|debug] [all] [flavor X] [limit MB]` | Flutter APK build eder. Varsayılan `small`: release → profile → debug sırasıyla dener, yalnızca arm64, obfuscate + tree-shake; 50 MB altına inen ilkini Telegram'dan dosya olarak gönderir, sığmazsa en küçüğünü **download linki** ile verir ve paketi büyüten bileşenleri listeler. Ajan da görev içinde `build-apk` skill'iyle yapar ve küçültme planı önerir |
 | `/builds` | Son build'ler ve indirme linkleri |
 | `/tunnel [check\|restart]` | Download linki tünelinin durumu (adres, dışarıdan doğrulama, son hata), test linki; `restart` ile yeniden kur |
@@ -142,6 +145,24 @@ container açılışı: scripts/sdk-env.sh → /data/sdks/env.sh  (BASH_ENV; aja
   sonraki `./up.sh` bunu indirmeden paylaşımlı volume'a terfi ettirir.
 - Desteklenen: `jdk android flutter dart go node rust`. Yeni SDK = `scripts/sdk-install.sh`'a bir `case` +
   `scripts/sdk-detect.sh`'a bir kural.
+
+## Token tasarrufu
+
+Abonelik limitini en çok tüketen dört şey ve botun karşılığı:
+
+- **Keşif okumaları** → analiz sonuçları `.agent/ANALYSIS.md`'de cache'lenir (7 gün / 20 commit); 5+ dosya
+  gerektiğinde ana ajan kendisi okumaz, ucuz modelde koşan `explorer` alt-ajanından ≤ 40 satırlık özet alır.
+- **Uzun komut çıktıları** → build/test/paket yöneticisi komutları bir `PreToolUse` hook'uyla otomatik kırpılır:
+  tam çıktı `/data/logs/…`, modele son `BASH_TAIL_LINES` (80) satır. `/test`, `/lint`, `/build` gibi rutinler ise
+  Claude hiç çalışmadan koşar; yalnızca kırmızıysa ve sen istersen ajan devreye girer.
+- **İkinci tam ajan olarak review** → `reviewer` alt-ajanı `MODEL_REVIEW` (sonnet) ile, salt-okunur.
+- **Model** → `/model` ile ana model; `MODEL_EXPLORE` (haiku) / `MODEL_REVIEW` (sonnet) alt-ajanlar; Opus yalnızca
+  sen istersen. `/quick` küçük işlerde analiz + review'ı atlar. Her görevin bitiş satırı token sayısını ve cache
+  oranını gösterir; `/status` oturum toplamını.
+
+Repo tarafında iki küçük dosya çok şey kazandırır: `.agent-tasks` (satır başına `ad: komut`; `test: make test`,
+`build: flutter build apk --flavor prod`) ve kısa bir `CLAUDE.md` (mimari, dizinler, komutlar, kalıplar) — ajan
+keşif turu atmadan işe başlar.
 
 ## Büyük dosyalar: download linki
 

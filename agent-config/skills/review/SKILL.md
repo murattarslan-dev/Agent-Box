@@ -17,16 +17,9 @@ Amaç: PR'ı açacak kişi sen olduğun için, kodu yazan "sen"den ayrı bir gö
    ```
    Diff boşsa: "Review edilecek değişiklik yok" de ve dur.
 
-2. **Bağımsız review — `Task` alt-ajanı** (subagent_type: general-purpose). Prompt şablonu:
+2. **Bağımsız review — `Task` alt-ajanı, `subagent_type: "reviewer"`** (ucuz modelde, salt-okunur; tanımı botta). Prompt şablonu (kısa tut; reviewer zaten PLAN.md ve review.diff'i okur):
 
-   > Sen kıdemli bir reviewer'sın. `.agent/PLAN.md` hedefi ve `.agent/review.diff` diff'ini oku; gerekirse repo'daki ilgili dosyalara bak. Kodu YAZMA, sadece değerlendir. Şu başlıklarda bulgu ver, her bulguya `[kritik|yüksek|orta|düşük]` etiketi ve `dosya:satır` ekle:
-   > 1. Doğruluk: mantık hataları, edge case, null/empty, eşzamanlılık, hata yönetimi
-   > 2. Plan uyumu: plandaki her adım yapıldı mı, kapsam dışına çıkıldı mı
-   > 3. Mimari uyum: repo'nun mevcut kalıplarına aykırılık (ANALYSIS.md'deki örnekle kıyasla)
-   > 4. Güvenlik: injection, sır sızıntısı, yetki, girdi doğrulama
-   > 5. Test: yeni davranış test edildi mi, testler anlamlı mı
-   > 6. Okunabilirlik/bakım: adlandırma, tekrar, gereksiz karmaşıklık
-   > Sonunda `KARAR: GEÇTİ` ya da `KARAR: DÜZELTME GEREKLİ` yaz. Kritik/yüksek bulgu varsa karar GEÇTİ olamaz. Bulgu yoksa uydurma.
+   > Görev: <1 cümle>. `.agent/PLAN.md` ve `.agent/review.diff`'i değerlendir; özellikle <varsa riskli nokta>. Bulguları önem etiketiyle ve KARAR satırıyla ver.
 
 3. **Bulguları işle**
    - `kritik` ve `yüksek`: düzelt, commit at (`fix(review): ...`).
@@ -35,7 +28,7 @@ Amaç: PR'ı açacak kişi sen olduğun için, kodu yazan "sen"den ayrı bir gö
    - Katılmadığın bulguyu gerekçesiyle REVIEW.md'ye "Reddedildi" olarak yaz (sessizce yutma).
 
 4. **Doğrula**
-   - Tüm testler + lint + build (varsa). Çıktıyı `| tail -40` ile kısalt.
+   - `/app/scripts/run-task.sh test` ve `run-task.sh lint` (kırpılmış çıktı, tam log `/data/logs`); build gerekiyorsa `run-task.sh build`.
    - Düzeltme yaptıysan 2. adıma dön (en fazla 3 tur). 3 tur sonunda hâlâ kritik varsa dur ve AskUserQuestion ile kullanıcıya bildir (header: "Review").
 
 5. **`.agent/REVIEW.md` yaz**
@@ -57,6 +50,7 @@ Amaç: PR'ı açacak kişi sen olduğun için, kodu yazan "sen"den ayrı bir gö
 
 ## Kurallar
 
-- Review'ı kendin yapıp "geçti" deme; alt-ajan zorunlu. Alt-ajan çalışmazsa (araç hatası) bunu söyle ve kendin yap ama REVIEW.md'ye "bağımsız review yapılamadı" yaz.
+- Review'ı kendin yapıp "geçti" deme; `reviewer` alt-ajanı zorunlu (⚡ hızlı modda atlanır, sistem promptu söyler). Alt-ajan çalışmazsa (araç hatası) bunu söyle ve kendin yap ama REVIEW.md'ye "bağımsız review yapılamadı" yaz.
+- Diff büyükse (> 800 satır) reviewer'a tamamını değil, `git diff --stat` + en riskli 3 dosyanın diff'ini ver.
 - Testleri geçirmek için testi zayıflatma/silme; gerçekten yanlış bir testse gerekçesini REVIEW.md'ye yaz.
 - Review sırasında kapsam genişletme yok.

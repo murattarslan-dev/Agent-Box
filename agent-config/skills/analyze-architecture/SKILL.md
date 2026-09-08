@@ -9,6 +9,8 @@ Amaç: koda dokunmadan önce **neyi, nerede, hangi kalıpla** değiştireceğini
 
 ## Adımlar
 
+0. **Önce cache'e bak (token tasarrufu)** — `.agent/ANALYSIS.md` varsa: tarihi 7 günden yeni **ve** `git log --since="<o tarih>" --oneline | wc -l` < 20 ise yeniden analiz **yapma**; dosyayı oku, göreve özel bölümü (etkilenecek dosyalar, örnek kalıp) `Grep` ile 2-3 aramada güncelle, `## Görevle ilgili alan` başlığını yeniden yaz ve doğrudan `plan-and-approve`'a geç. Aksi halde devam.
+
 1. **Bağlamı oku (2 dk)**
    - `git status`, `git branch --show-current`, `git log --oneline -15`.
    - Kök dizindeki `README*`, `CLAUDE.md`, `ARCHITECTURE*`, `CONTRIBUTING*`, `docs/` başlıkları.
@@ -57,5 +59,5 @@ Amaç: koda dokunmadan önce **neyi, nerede, hangi kalıpla** değiştireceğini
 ## Kurallar
 
 - Bu fazda **repo dosyasına yazma yok** (kapı zaten kapalı). Sadece `.agent/`.
-- Tüm repo'yu okuma; göreve yetecek kadar derine in. 20 dosyadan fazlasını okuyacaksan önce `Task` alt-ajanıyla "keşif" yaptır ve özet al.
+- Tüm repo'yu okuma; göreve yetecek kadar derine in. **5'ten fazla dosya** okuman gerekecekse kendin okuma: `Task` aracıyla `subagent_type: "explorer"` alt-ajanına (ucuz model) sor — "X özelliği hangi katmanlarda, hangi dosyalar, örnek alınacak benzer kalıp hangisi, test nasıl koşuyor" — ve dönen ≤40 satırlık özeti kullan; ana context'e yalnızca 2-3 anahtar dosyayı kendin al. Explorer'a soruyu tek seferde ve somut ver (birden fazla küçük Task açma).
 - Kanıtsız iddia yok: "X kullanılıyor" diyorsan dosya yolunu yaz.
