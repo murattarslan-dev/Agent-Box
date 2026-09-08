@@ -12,7 +12,7 @@ const NOISY = [
   /\bgo\s+(test|build|vet|mod|run|generate)\b/,
   /\bcargo\s+(build|test|clippy|check|fetch)\b/,
   /\b(pytest|mvn|sdkmanager|apt-get|pip3?\s+install)\b/,
-  /\/app\/scripts\/(build-apk|sdk-install)\.sh\b/,
+  /\/app\/scripts\/(build-apk|sdk-install|screenshot)\.sh\b/,
   /\bsdk-install\b/,
 ];
 // Zaten kırpılmış / kendi filtresi olan / arka plana atılan komutlara dokunma

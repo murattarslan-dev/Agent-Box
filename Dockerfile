@@ -45,7 +45,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config python3 python3-pip python3-venv \
       ripgrep fd-find unzip zip xz-utils tar bzip2 file less procps \
       libglu1-mesa libgtk-3-0 clang cmake ninja-build \
+      chromium fonts-liberation fonts-noto-core fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
+# chromium: Flutter web build'inden ekran görüntüsü (scripts/screenshot.sh); emülatör/KVM gerekmez
+ENV CHROMIUM_PATH=/usr/bin/chromium
 
 # GitHub CLI (gh) — resmi apt deposu (amd64 + arm64)
 RUN mkdir -p -m 755 /etc/apt/keyrings \
@@ -93,6 +96,7 @@ COPY --from=build --chown=agent:agent /app/dist ./dist
 COPY --chown=agent:agent package.json ./
 COPY --chown=agent:agent agent-config ./agent-config
 COPY --chown=agent:agent scripts ./scripts
+COPY --chown=agent:agent templates ./templates
 COPY --chown=agent:agent docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh ./scripts/*.sh && ln -s /app/scripts/sdk-install.sh /usr/local/bin/sdk-install && ln -s /app/scripts/sdk-env.sh /usr/local/bin/sdk-env && ln -s /app/scripts/sdk-detect.sh /usr/local/bin/sdk-detect
 

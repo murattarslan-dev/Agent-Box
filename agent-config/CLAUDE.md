@@ -13,6 +13,8 @@ Bu dosya container içindeki ajanın kalıcı notudur; repo'nun kendi CLAUDE.md'
 | PR | `open-pr` | AskUserQuestion(header "PR") → push + PR |
 | Ortam | `bootstrap-env` | `$SDK_HOME/env.sh`, `.agent/ENV.md` |
 | APK | `build-apk` | `/data/builds/…/*.apk` → `.agent/outbox/` → Telegram |
+| Karakter | `character` | repo kökünde `CLAUDE.md` (kimlik + mimari + komutlar + sdks), onaylı PR |
+| Ekran görüntüsü | `screenshot` | web build → headless Chromium → `.agent/outbox/*.png` → Telegram fotoğraf; ya da `.agent/preview.request` → telefondan açılan link |
 
 Skill'i `Skill` aracıyla çağır (ör. `Skill: analyze-architecture`); içindeki adımları sırayla uygula.
 

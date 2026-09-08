@@ -28,7 +28,28 @@ const MIME: Record<string, string> = {
   ".log": "text/plain; charset=utf-8",
   ".json": "application/json",
   ".pdf": "application/pdf",
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript",
+  ".mjs": "application/javascript",
+  ".css": "text/css",
+  ".wasm": "application/wasm",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
 };
+
+/** /app/ altında sunulan web uygulaması (Flutter web build, --base-href /app/). */
+interface Preview {
+  dir: string;
+  key: string;
+  expires: number;
+  hits: number;
+}
 
 export class FileServer {
   private entries = new Map<string, Entry>();
@@ -41,6 +62,7 @@ export class FileServer {
   private lastErr?: string;
   private checkTimer?: NodeJS.Timeout;
   private onDownload?: (name: string, entry: Entry) => void;
+  private preview?: Preview;
 
   constructor(private port = config.filePort) {}
 
@@ -90,6 +112,8 @@ export class FileServer {
       lines.push(`yeniden başlatma: ${this.tunnelRestarts}`);
     }
     lines.push(`aktif link: ${this.entries.size}`);
+    const pv = this.previewStatus();
+    if (pv) lines.push(`önizleme (/app): ${pv}`);
     return lines.join("\n");
   }
 
@@ -147,6 +171,30 @@ export class FileServer {
     return `${base}/d/${token}/${encodeURIComponent(path.basename(file))}`;
   }
 
+  /**
+   * Web build'ini /app/ altında yayınla; dönen link ?k=<anahtar> ile açılır, anahtar çereze yazılır,
+   * sonraki istekler (js, assets, rotalar) çerezle geçer. Süre dolunca 403.
+   */
+  setPreview(dir: string, ttlHours = config.linkTtlHours): string | undefined {
+    const base = this.baseUrl;
+    if (!base) return undefined;
+    const key = crypto.randomBytes(16).toString("hex");
+    this.preview = { dir, key, expires: Date.now() + ttlHours * 3_600_000, hits: 0 };
+    return `${base}/app/?k=${key}`;
+  }
+
+  clearPreview() {
+    this.preview = undefined;
+  }
+
+  previewStatus(): string | undefined {
+    const p = this.preview;
+    if (!p) return undefined;
+    if (p.expires < Date.now()) return "süresi dolmuş";
+    const left = Math.max(0, Math.round((p.expires - Date.now()) / 3_600_000));
+    return `aktif · ${p.hits} istek · ~${left} sa kaldı`;
+  }
+
   /** Neden link üretilemediğini açıklayan kısa metin. */
   reason(): string {
     if (config.fileLinks === "off") return "dosya linkleri kapalı (FILE_LINKS=off)";
@@ -166,6 +214,10 @@ export class FileServer {
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (req.url === "/_health") {
       res.writeHead(200, { "content-type": "text/plain", "cache-control": "no-store" }).end("ok " + Date.now());
+      return;
+    }
+    if ((req.url ?? "").startsWith("/app")) {
+      this.handlePreview(req, res);
       return;
     }
     const m = (req.url ?? "").match(/^\/d\/([a-f0-9]{32})\/[^/]+$/);
@@ -213,6 +265,73 @@ export class FileServer {
       this.onDownload?.(name, e);
     }
     fs.createReadStream(e.file, { start, end }).pipe(res);
+  }
+
+  private handlePreview(req: http.IncomingMessage, res: http.ServerResponse) {
+    const p = this.preview;
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (code: number, msg: string) =>
+      res.writeHead(code, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }).end(`<!doctype html><meta name=viewport content="width=device-width"><body style="font-family:sans-serif;padding:24px"><h3>claude-telegram-agent</h3><p>${msg}</p>`);
+    if (!p || p.expires < Date.now()) {
+      html(403, "Önizleme linki yok ya da süresi dolmuş. Telegram'da <code>/preview</code> ile yeni link al.");
+      return;
+    }
+    if (url.pathname === "/app") {
+      res.writeHead(302, { location: "/app/" + url.search }).end();
+      return;
+    }
+    const k = url.searchParams.get("k");
+    const secure = (this.baseUrl ?? "").startsWith("https://");
+    if (k) {
+      if (k !== p.key) {
+        html(403, "Anahtar geçersiz. Telegram'da <code>/preview</code> ile yeni link al.");
+        return;
+      }
+      url.searchParams.delete("k");
+      res
+        .writeHead(302, {
+          "set-cookie": `ctap=${p.key}; Path=/app; Max-Age=${Math.max(60, Math.floor((p.expires - Date.now()) / 1000))}; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
+          location: url.pathname + (url.search || ""),
+        })
+        .end();
+      return;
+    }
+    const cookie = (req.headers.cookie ?? "").split(/;\s*/).find((c) => c.startsWith("ctap="))?.slice(5);
+    if (cookie !== p.key) {
+      html(403, "Bu adres için yetki yok. Linki Telegram'daki haliyle (<code>?k=…</code>) aç.");
+      return;
+    }
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405).end();
+      return;
+    }
+    // /app/<yol> → dir/<yol>; yoksa index.html (SPA fallback: Flutter rotaları)
+    let rel = decodeURIComponent(url.pathname.replace(/^\/app\/?/, ""));
+    let file = path.resolve(p.dir, rel);
+    if (!file.startsWith(path.resolve(p.dir))) {
+      res.writeHead(403).end();
+      return;
+    }
+    if (!rel || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      file = path.join(p.dir, "index.html");
+      rel = "index.html";
+    }
+    if (!fs.existsSync(file)) {
+      html(404, "Web build bulunamadı (build/web/index.html yok). Telegram'da <code>/preview build</code>.");
+      return;
+    }
+    p.hits++;
+    const st = fs.statSync(file);
+    res.writeHead(200, {
+      "content-type": MIME[path.extname(file).toLowerCase()] ?? "application/octet-stream",
+      "content-length": String(st.size),
+      "cache-control": rel === "index.html" ? "no-store" : "no-cache",
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    fs.createReadStream(file).pipe(res);
   }
 
   // ---------------- Cloudflare quick tunnel ----------------

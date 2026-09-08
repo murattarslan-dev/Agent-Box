@@ -16,6 +16,7 @@ Amaç: PR'ı açacak kişi sen olduğun için, kodu yazan "sen"den ayrı bir gö
    git diff origin/<varsayılan-dal>...HEAD > .agent/review.diff
    ```
    Diff boşsa: "Review edilecek değişiklik yok" de ve dur.
+   Diff UI dosyalarına dokunuyorsa (`presentation/`, `widgets/`, `*_page.dart`, tema) `screenshot` skill'i ile **değişen 1-3 rotanın** görüntüsünü al (`/app/scripts/screenshot.sh --outbox <rota…>`); kullanıcı Telegram'da fotoğraf olarak görür, sen de görüntüyü `Read` ile açıp bariz bozuklukları (taşma, boş ekran, yanlış renk) reviewer bulgusu gibi ele al.
 
 2. **Bağımsız review — `Task` alt-ajanı, `subagent_type: "reviewer"`** (ucuz modelde, salt-okunur; tanımı botta). Prompt şablonu (kısa tut; reviewer zaten PLAN.md ve review.diff'i okur):
 

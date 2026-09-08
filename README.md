@@ -68,6 +68,9 @@ yazdıkların kuyruğa girer.
 | `/status` | Faz, dal, kapı durumu, kullanım. Gösterilen `≈$` değeri gerçek fatura değil, aboneliğinle yaptığın işin API liste fiyatıyla eşdeğeri |
 | `/cancel` | Çalışan işi durdur |
 | `/init` | Ortamı doğrula (SDK'lar, `flutter doctor` vb.), eksik varsa kur |
+| `/preview [build\|stop]` | Uygulamayı web olarak yayınla ve **telefondan açacağın link** gönder: giriş dahil her şeyi kendin denersin, token gerekmez; link 24 sa, anahtar ilk açılışta çereze yazılır |
+| `/ss [rota…] [build] [hash] [desktop]` | Flutter web build'ini headless Chromium'da telefon boyutunda açıp ekran görüntülerini fotoğraf olarak gönder (emülatörsüz, KVM gerekmez); rotalar `CLAUDE.md` ```screenshot bloğundan |
+| `/karakter [not]` | Repo için "sanal karakter" dosyası `CLAUDE.md` üret/güncelle (mimari kuralları, komutlar, SDK'lar); onaylı PR — bkz. [Token tasarrufu](#token-tasarrufu) |
 | `/review` · `/pr` | Review'ı / PR akışını elle tetikle |
 | `/diff` · `/log` · `/sdk` | Çalışma ağacı diff'i (dosya) · son commit'ler · bağlı SDK'lar |
 | `/limit` | Abonelik kullanımı (canlı, Claude Code'un `/usage` ekranıyla aynı kaynak): 5 saatlik ve 7 günlük pencerede kullanılan/kalan yüzde, sıfırlanma saati. %80'i geçince ve dolunca bot kendiliğinden uyarır |
@@ -160,9 +163,65 @@ Abonelik limitini en çok tüketen dört şey ve botun karşılığı:
   sen istersen. `/quick` küçük işlerde analiz + review'ı atlar. Her görevin bitiş satırı token sayısını ve cache
   oranını gösterir; `/status` oturum toplamını.
 
-Repo tarafında iki küçük dosya çok şey kazandırır: `.agent-tasks` (satır başına `ad: komut`; `test: make test`,
-`build: flutter build apk --flavor prod`) ve kısa bir `CLAUDE.md` (mimari, dizinler, komutlar, kalıplar) — ajan
-keşif turu atmadan işe başlar.
+### Repo tarafı: tek dosyalık "sanal karakter" (`CLAUDE.md`)
+
+Tokenin büyük kısmı ajanın her görevde repoyu **yeniden keşfetmesine** gider. Bunu kesmenin yolu, repo köküne
+ajanın karakterini anlatan **tek bir `CLAUDE.md`** koymaktır: kimlik (rol + stack), değişmez mimari kuralları,
+katman haritası, "yeni ekran/modül nasıl eklenir" reçeteleri, yapma listesi, komutlar ve SDK sürümleri. Claude Code
+bu dosyayı her turda otomatik yükler; ajan haritalama adımını atlar, doğrudan görevle ilgili 2-3 dosyayı açar ve
+sabit kalıbı kopyalar.
+
+- Şablon: [`templates/CLAUDE.md`](templates/CLAUDE.md) · dolu örnek (Flutter, feature-first):
+  [`templates/examples/hanio-flutter.CLAUDE.md`](templates/examples/hanio-flutter.CLAUDE.md).
+- Bot üretsin: Telegram'da `/karakter` → repoyu ucuz alt-ajanla tarar, taslağı telefona gönderir, onayınla
+  `agent/character` dalında commit'ler ve PR açar. Var olan dosyayı da günceller.
+- Dosyanın içindeki iki blok makine tarafından okunur, böylece ek dosya gerekmez:
+  ```agent-tasks``` bloğu → `/test /lint /build` ve ajanın `run-task.sh`'ı (satır: `ad: komut`);
+  ```sdks``` bloğu → `up.sh`/sihirbaz SDK volume'ları (satır: `isim sürüm`). Ayrı `.agent-tasks` / `.sdks` /
+  `.tool-versions` varsa onlar önceliklidir.
+- **Kısa tut (≤ 120 satır)**: her satır her turda token harcar. Uzun mimari dökümü `docs/`'a koy, CLAUDE.md'den
+  "gerekince oku" diye işaret et.
+
+Repo tarafında dikkat edilecek diğer şeyler (hepsi ajanın okuyacağı metni küçültür):
+
+- Üretilmiş/derlenmiş şeyler (`build/`, `.dart_tool/`, `*.g.dart`, `node_modules/`, coverage, lock dosyaları)
+  `.gitignore`'da olsun **ve** CLAUDE.md'nin "asla okuma" listesinde geçsin. Assets, fixture JSON'ları, snapshot'lar
+  gibi büyük veri dosyaları için de aynısı.
+- Küçük, tek-sorumluluklu dosyalar (≤ 300 satır): ajan büyük dosyayı parça parça okumak zorunda kalır ve
+  düzenlerken bağlamı kaybeder. 1500 satırlık `utils.dart`'ı bölmek somut tasarruftur.
+- Her modülün **tek dış yüzey dosyası** olsun (Hanio'daki `<modul>_module.dart` gibi): ajan modülü tanımak için
+  bir dosya okur, hepsini değil.
+- Testler dosya başına çalıştırılabilir olsun (`flutter test test/x_test.dart`, `go test ./pkg/x`); tam paket yalnız
+  bitişte koşar. Test çıktısı gürültülüyse sessiz bayrakları CLAUDE.md'deki komuta yaz.
+- Komut/sürüm bilgisi tek yerde: `agent-tasks` + `sdks` blokları (ya da `.tool-versions`). Ajan "test nasıl
+  koşuyor?" diye README'yi ya da CI dosyasını okumasın.
+- Lint/format aracı repoda tanımlı olsun (`analysis_options.yaml`, `.golangci.yml`, eslint): reviewer'ın üslup
+  bulguları yerine araç yakalar, ajan "düzelt" turu atmaz.
+- Görevleri Telegram'dan **küçük ve somut** ver ("partners listesine arama kutusu; mevcut filtre kalıbını kullan")
+  — belirsiz görev = uzun analiz + uzun plan + değişiklik istekleri. Tek dosyalık işler için `/quick`.
+
+## Uygulamayı telefondan açmak ve ekran görüntüsü (emülatörsüz)
+
+Container'da Android emülatörü yok (KVM ister; Mac'te Docker içinde hiç yok). Bunun yerine uygulama **web** olarak
+derlenir (`flutter build web --base-href /app/`) ve iki şekilde sana ulaşır:
+
+**`/preview` — telefondan aç.** Bot build'i kendi HTTP sunucusunda `/app/` altında yayınlar ve download linkleriyle
+aynı Cloudflare tüneli üzerinden `https://….trycloudflare.com/app/?k=<anahtar>` gönderir. Linki telefonda açarsın;
+anahtar çereze yazılır, uygulama telefon boyutunda tarayıcıda çalışır, giriş dahil her şeyi kendin yaparsın — test
+token'ı, emülatör, APK yükleme yok. Link 24 saat geçerli, `/preview stop` kapatır; yeni build sonrası aynı link
+çalışmaya devam eder. Ajan da UI işi bitince "link ver" dediğinde bunu üretir. Not: uygulama API'ye tarayıcıdan
+gittiği için backend'in CORS'u tünel origin'ine izin vermeli (kendi API'nde `Access-Control-Allow-Origin` genişse sorun yok).
+
+**`/ss` — fotoğraf.** Aynı build bot'un statik sunucusunda açılır ve imajdaki headless Chromium 390×844 @2x
+mobil viewport'ta her rota için PNG alır; Telegram'a fotoğraf/albüm olarak gelir. `/ss /home /home/m/customers`
+ya da rotasız `/ss` (rotalar `CLAUDE.md` ```screenshot bloğundan). Web build yalnızca `lib/`, `web/`, `pubspec.yaml`
+değiştiyse yenilenir; `build` argümanı zorlar. Ajan da UI değişikliklerinde review'dan önce değişen rotaları çeker ve
+görüntüye kendisi bakar (`screenshot` skill'i).
+
+Giriş gerektiren ekranlar için `.env`'e test kullanıcısının token'ını `APP_TEST_TOKEN` olarak koy ve CLAUDE.md
+bloğuna `storage: <localStorage anahtarı>=$APP_TEST_TOKEN` yaz; script token'ı tarayıcıya sayfa açılmadan enjekte
+eder (Flutter web canvas'a çizdiği için forma yazarak login olunamaz). Hash routing kullanan uygulamalarda
+`hash: true`. Sınır: native görünümler (izin diyaloğu, kamera) web'de yok — onlar için `/apk`.
 
 ## Büyük dosyalar: download linki
 

@@ -207,11 +207,22 @@ if (( VERIFY )) && command -v git >/dev/null 2>&1; then
 fi
 
 declare -a SDK_NAMES_FOUND=() SDK_VERS_FOUND=()
-if [[ -n "$CLONE" && -f "$CLONE/.sdks" ]]; then
-  say "  Repoda ${c_b}.sdks${c_off} var:"
-  sed -E 's/#.*//; /^[[:space:]]*$/d; s/^/    /' "$CLONE/.sdks"
+# Repoda pin var mı? .sdks dosyası ya da CLAUDE.md içindeki ```sdks bloğu (tek dosya "karakter" yaklaşımı)
+PIN_SRC=""; PIN_TEXT=""
+if [[ -n "$CLONE" ]]; then
+  if [[ -f "$CLONE/.sdks" ]]; then PIN_SRC=".sdks"; PIN_TEXT="$(cat "$CLONE/.sdks")"
+  elif [[ -f "$CLONE/CLAUDE.md" ]] && grep -q '^```sdks' "$CLONE/CLAUDE.md"; then
+    PIN_SRC="CLAUDE.md (sdks bloğu)"; PIN_TEXT="$(awk '/^```sdks/{f=1;next} /^```/{f=0} f' "$CLONE/CLAUDE.md")"
+  fi
+  if [[ -n "$PIN_TEXT" ]] && grep -qE '<[^>]*>' <<<"$PIN_TEXT"; then
+    warn "$PIN_SRC içinde doldurulmamış <…> sürüm var; yok sayıldı (dosyayı doldurup tekrar çalıştırabilirsin)"; PIN_SRC=""; PIN_TEXT=""
+  fi
+fi
+if [[ -n "$PIN_TEXT" ]]; then
+  say "  Repoda ${c_b}${PIN_SRC}${c_off} var:"
+  sed -E 's/#.*//; /^[[:space:]]*$/d; s/^/    /' <<<"$PIN_TEXT"
   if confirm "Bunu kullanayım mı?"; then
-    SDKS="$(sed -E 's/#.*//; s/[[:space:]]+/ /g; s/^ //; s/ $//; s/[:=]/ /' "$CLONE/.sdks" | grep -v '^$' | awk '{print $1":"$2}' | paste -sd, -)"
+    SDKS="$(sed -E 's/#.*//; s/[[:space:]]+/ /g; s/^ //; s/ $//; s/[:=]/ /' <<<"$PIN_TEXT" | grep -v '^$' | awk '{print $1":"$2}' | paste -sd, -)"
   fi
 fi
 if [[ -z "$SDKS" ]]; then
@@ -254,7 +265,7 @@ fi
 [[ -n "$SDKS" ]] && ok "SDKS=$SDKS"
 
 # .sdks dosyasını repoya yaz (isteğe bağlı, tek küçük commit)
-if [[ -n "$CLONE" && -n "$SDKS" && "$SDKS" != none && ! -f "$CLONE/.sdks" ]]; then
+if [[ -n "$CLONE" && -n "$SDKS" && "$SDKS" != none && -z "$PIN_SRC" && ! -f "$CLONE/.sdks" ]]; then
   if confirm "Bunu repoya '.sdks' dosyası olarak commit'leyip push edeyim mi? (bir daha sorulmaz, her makine aynı sürümü kullanır)"; then
     { echo "# SDK sürümleri — claude-telegram-agent bu dosyadan kurar (isim sürüm)"; tr ',' '\n' <<<"$SDKS" | tr ':' ' '; } > "$CLONE/.sdks"
     if ( cd "$CLONE" && git add .sdks && git -c user.name="${GIT_USER_NAME:-Claude Agent}" -c user.email="${GIT_USER_EMAIL:-claude-agent@noreply.local}" commit -qm "Add .sdks (SDK versions for claude-telegram-agent)" \

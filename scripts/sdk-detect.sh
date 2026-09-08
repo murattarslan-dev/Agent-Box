@@ -16,16 +16,25 @@ cd "$REPO"
 #   flutter 3.24.5      (ya da flutter:3.24.5 / flutter=3.24.5)
 #   jdk 17
 #   android 34
-SDKS_FILE=""
+#   Aynı içerik CLAUDE.md içinde ```sdks … ``` bloğu olarak da verilebilir (tek dosya "karakter" yaklaşımı).
+SDKS_FILE=""; SDKS_TEXT=""
 for f in .sdks sdks.txt .sdk-versions; do [[ -f "$f" ]] && { SDKS_FILE="$f"; break; }; done
 if [[ -n "$SDKS_FILE" ]]; then
+  SDKS_TEXT="$(cat "$SDKS_FILE")"
+elif [[ -f CLAUDE.md ]] && grep -q '^```sdks' CLAUDE.md; then
+  SDKS_FILE="CLAUDE.md (sdks bloğu)"
+  SDKS_TEXT="$(awk '/^```sdks/{f=1;next} /^```/{f=0} f' CLAUDE.md)"
+fi
+if [[ -n "$SDKS_TEXT" ]] && ! grep -qE '<[^>]*>' <<<"$SDKS_TEXT"; then   # "<3.x.y>" gibi doldurulmamış şablon → yok say
   echo "# kaynak: $SDKS_FILE" >&2
-  sed -E 's/#.*//; s/[[:space:]]+/ /g; s/^ //; s/ $//; s/[:=]/ /' "$SDKS_FILE" | grep -v '^$' | while read -r n v; do
+  sed -E 's/#.*//; s/[[:space:]]+/ /g; s/^ //; s/ $//; s/[:=]/ /' <<<"$SDKS_TEXT" | grep -v '^$' | while read -r n v; do
     if (( RAW )); then echo "$n ${v:-stable}"; else echo "$n $(resolve_version "$n" "${v:-}")"; fi
   done
   exit 0
+elif [[ -n "$SDKS_TEXT" ]]; then
+  echo "# UYARI: $SDKS_FILE içinde doldurulmamış <…> sürüm var, yok sayıldı" >&2
 fi
-echo "# kaynak: tahmin (repoda .sdks yok)" >&2
+echo "# kaynak: tahmin (repoda .sdks / CLAUDE.md sdks bloğu yok)" >&2
 
 declare -A WANT=()
 need() { [[ -n "${WANT[$1]:-}" ]] || WANT[$1]="$2"; }   # ilk bulunan kazanır

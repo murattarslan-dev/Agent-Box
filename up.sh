@@ -156,7 +156,10 @@ docker_action() {
     shell)   docker exec -it claude-telegram-agent bash ;;
     status)  docker ps --filter name=claude-telegram-agent --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
              docker exec claude-telegram-agent cat /data/state.json 2>/dev/null || true ;;
-    sdk)     if [[ -n "${SDKS:-}" ]]; then info "SDK kaynağı: .env SDKS=$SDKS"; elif [[ -f "$DATA_PATH/repo/.sdks" ]]; then info "SDK kaynağı: repo/.sdks"; sed 's/^/     /' "$DATA_PATH/repo/.sdks"; else info "SDK kaynağı: tahmin (repoda .sdks yok, .env SDKS boş)"; fi
+    sdk)     if [[ -n "${SDKS:-}" ]]; then info "SDK kaynağı: .env SDKS=$SDKS"
+             elif [[ -f "$DATA_PATH/repo/.sdks" ]]; then info "SDK kaynağı: repo/.sdks"; sed 's/^/     /' "$DATA_PATH/repo/.sdks"
+             elif [[ -f "$DATA_PATH/repo/CLAUDE.md" ]] && grep -q '^```sdks' "$DATA_PATH/repo/CLAUDE.md"; then info "SDK kaynağı: repo/CLAUDE.md (sdks bloğu)"; awk '/^```sdks/{f=1;next} /^```/{f=0} f' "$DATA_PATH/repo/CLAUDE.md" | sed 's/^/     /'
+             else info "SDK kaynağı: tahmin (repoda .sdks / CLAUDE.md sdks bloğu yok, .env SDKS boş)"; fi
              info "Host'taki SDK volume'ları:"; "$SDKV" list
              info "Container'da bağlı olanlar:"; docker exec claude-telegram-agent /app/scripts/sdk-env.sh --list 2>/dev/null || warn "container çalışmıyor"
              echo "   Silmek için: docker volume rm sdk-<isim>-<sürüm>" ;;

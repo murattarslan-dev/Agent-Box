@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Repo görevlerini (test / lint / build / format / …) Claude'suz, deterministik çalıştırır.
 #   run-task.sh <görev> [ek argümanlar…]        run-task.sh --list
-# Komut kaynağı: repo kökündeki .agent-tasks (satır: "ad: komut"), yoksa proje türüne göre varsayılan.
+# Komut kaynağı: repo kökündeki .agent-tasks (satır: "ad: komut") > CLAUDE.md içindeki ```agent-tasks bloğu > proje türüne göre varsayılan.
 # Tam çıktı /data/logs/<görev>-<zaman>.log'a yazılır; ekrana yalnızca son N satır (TASK_TAIL, varsayılan 60).
 # Çıkış kodu = komutun çıkış kodu. Son satır: "TASK: <ad> <ok|fail> <kod> <log>"
 set -uo pipefail
@@ -59,17 +59,30 @@ default_cmd() {
   fi
 }
 
-task_cmd() {  # .agent-tasks → varsayılan
+# Görev tanımları: .agent-tasks dosyası > CLAUDE.md içindeki ```agent-tasks bloğu > varsayılan
+tasks_source() {
+  if [[ -f .agent-tasks ]]; then echo .agent-tasks
+  elif [[ -f CLAUDE.md ]] && grep -q '^```agent-tasks' CLAUDE.md; then echo CLAUDE.md
+  fi
+}
+tasks_lines() {  # "ad: komut" satırları (yorumsuz)
+  local src; src="$(tasks_source)"
+  case "$src" in
+    .agent-tasks) sed -E 's/#.*//' .agent-tasks ;;
+    CLAUDE.md)    awk '/^```agent-tasks/{f=1;next} /^```/{f=0} f' CLAUDE.md | sed -E 's/#.*//' ;;
+  esac
+}
+task_cmd() {
   local t="$1" c=""
-  [[ -f .agent-tasks ]] && c="$(sed -E 's/#.*//' .agent-tasks | awk -v t="$t" -F': *' '$1==t { sub(/^[^:]*: */, ""); print; exit }')"
+  c="$(tasks_lines | awk -v t="$t" -F': *' '$1==t { sub(/^[^:]*: */, ""); print; exit }')"
   [[ -n "$c" ]] || c="$(default_cmd "$t")"
   printf '%s' "$c"
 }
 
 if [[ "${1:-}" == --list || -z "${1:-}" ]]; then
-  echo "Görevler (.agent-tasks → varsayılan):"
+  src="$(tasks_source)"; echo "Görevler (${src:-tanım yok} → varsayılan):"
   for t in test lint format build deps doctor; do c="$(task_cmd "$t")"; [[ -n "$c" ]] && printf '  %-7s %s\n' "$t" "$c"; done
-  if [[ -f .agent-tasks ]]; then sed -E 's/#.*//; /^\s*$/d' .agent-tasks | awk -F': *' '$1!~/^(test|lint|format|build|deps|doctor)$/ {printf "  %-7s %s\n", $1, substr($0, index($0,":")+2)}'; fi
+  tasks_lines | sed -E '/^\s*$/d' | awk -F': *' '$1!~/^(test|lint|format|build|deps|doctor)$/ {printf "  %-7s %s\n", $1, substr($0, index($0,":")+2)}'
   exit 0
 fi
 

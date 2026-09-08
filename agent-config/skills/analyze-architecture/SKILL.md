@@ -11,6 +11,8 @@ Amaç: koda dokunmadan önce **neyi, nerede, hangi kalıpla** değiştireceğini
 
 0. **Önce cache'e bak (token tasarrufu)** — `.agent/ANALYSIS.md` varsa: tarihi 7 günden yeni **ve** `git log --since="<o tarih>" --oneline | wc -l` < 20 ise yeniden analiz **yapma**; dosyayı oku, göreve özel bölümü (etkilenecek dosyalar, örnek kalıp) `Grep` ile 2-3 aramada güncelle, `## Görevle ilgili alan` başlığını yeniden yaz ve doğrudan `plan-and-approve`'a geç. Aksi halde devam.
 
+0b. **Repo'da karakter dosyası varsa (`CLAUDE.md`, "Katman haritası"/"Değişmezler" başlıklı)** — zaten context'inde yüklü; 2. adımı (yapıyı haritala) **atla**, mimari kalıbı/tek-kaynak dosyaları oradan al, "Örnek alınacak kalıp" için CLAUDE.md'deki örnek dosyaları kullan. Yalnızca 3. adımı (göreve odaklan) yap; ANALYSIS.md'nin "Proje" bölümüne "bkz. CLAUDE.md" yaz, tekrar etme. CLAUDE.md ile repo çelişiyorsa (dosya yok, kalıp değişmiş) bunu ANALYSIS.md'ye ve Telegram özetine yaz — kullanıcı `/karakter` ile güncelletebilir.
+
 1. **Bağlamı oku (2 dk)**
    - `git status`, `git branch --show-current`, `git log --oneline -15`.
    - Kök dizindeki `README*`, `CLAUDE.md`, `ARCHITECTURE*`, `CONTRIBUTING*`, `docs/` başlıkları.

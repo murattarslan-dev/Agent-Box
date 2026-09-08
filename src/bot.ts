@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
-import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
+import { Bot, InlineKeyboard, InputFile, InputMediaBuilder, type Context } from "grammy";
 import { config } from "./config.js";
 import { Agent, type AgentIO, type Question } from "./agent.js";
 import { loadState, resetState, saveState } from "./state.js";
@@ -43,6 +43,7 @@ Bir görev yaz, ajan şu akışı izler:
 /status — faz, dal, maliyet
 /cancel — çalışan işi durdur
 /init — repo'yu analiz edip eksik SDK'ları kur (bootstrap-env)
+/karakter — repo için "sanal karakter" dosyası (CLAUDE.md) üret/güncelle: mimari kuralları + komutlar + sdk'lar, onaylı PR
 /review — mevcut değişiklikleri review et
 /pr — review + PR onayı + PR aç
 /diff — çalışma ağacındaki değişiklikler
@@ -53,6 +54,8 @@ Bir görev yaz, ajan şu akışı izler:
 /test /lint /build /format /doctor — repo görevini Claude'suz çalıştır (.agent-tasks ya da varsayılan); hata olursa "ajana düzelttir" butonu
 /task [ad] — görev listesi / özel görev
 /apk [small|release|profile|debug] [all] [flavor X] [limit MB] — en küçük APK'yı build et ve gönder (≤50 MB dosya, üstü link)
+/preview [build|stop] — uygulamayı web olarak yayınla, telefondan açacağın link gönder (girişi kendin yaparsın; token gerekmez)
+/ss [rota…] [build] [hash] [desktop] — Flutter web build'ini telefon boyutunda açıp ekran görüntüsü gönder (emülatörsüz); rotalar CLAUDE.md'den
 /builds — son build'ler ve linkleri
 /tunnel [check|restart] — download linki tüneli durumu
 /approve — plan kapısını elle aç
@@ -111,6 +114,22 @@ export function createBot(agent: Agent, files: FileServer): Bot {
     return true;
   }
 
+  /** PNG/JPG'leri fotoğraf olarak (albüm, 10'arlı) gönderir; Telegram fotoğraf sınırı 10 MB, üstü belge olarak gider. */
+  const IMG_RE = /\.(png|jpe?g|webp)$/i;
+  async function sendPhotos(chatId: number, items: { file: string; caption?: string }[]): Promise<void> {
+    const photos = items.filter((i) => IMG_RE.test(i.file) && fs.statSync(i.file).size <= 10 * 1024 * 1024);
+    const rest = items.filter((i) => !photos.includes(i));
+    for (let i = 0; i < photos.length; i += 10) {
+      const group = photos.slice(i, i + 10);
+      if (group.length === 1) {
+        await bot.api.sendPhoto(chatId, new InputFile(group[0].file), { caption: group[0].caption ?? path.basename(group[0].file) });
+      } else {
+        await bot.api.sendMediaGroup(chatId, group.map((g) => InputMediaBuilder.photo(new InputFile(g.file), { caption: g.caption ?? path.basename(g.file) })));
+      }
+    }
+    for (const r of rest) await sendFile(chatId, r.file, r.caption);
+  }
+
   bot.command("tunnel", async (ctx) => {
     const arg = (ctx.match ?? "").trim();
     if (arg === "restart") {
@@ -126,6 +145,144 @@ export function createBot(agent: Agent, files: FileServer): Bot {
       probe = url ? `\n\nTest linki (küçük json, 24 sa): ${url}` : "";
     }
     await ctx.reply("🌐 Dosya linkleri\n" + files.status() + probe + "\n\nKomutlar: /tunnel check · /tunnel restart");
+  });
+
+  /** Web build'ini /app/ altında yayınla ve linki gönder (web-build.sh sonrası). */
+  async function publishPreview(chatId: number, note?: string): Promise<void> {
+    const dir = path.join(config.repoDir, "build", "web");
+    if (!fs.existsSync(path.join(dir, "index.html"))) {
+      await bot.api.sendMessage(chatId, "❌ build/web yok; /preview build ile derle.");
+      return;
+    }
+    const url = files.setPreview(dir);
+    if (!url) {
+      await bot.api.sendMessage(chatId, `❌ Dışarıdan erişilebilir adres yok: ${files.reason()}`);
+      return;
+    }
+    await bot.api.sendMessage(
+      chatId,
+      `📱 <b>Uygulama önizlemesi</b>${note ? " · " + escapeHtml(note) : ""}\n<a href="${url}">Telefonda aç</a>  <i>(${config.linkTtlHours} sa geçerli; anahtar ilk açılışta çereze yazılır)</i>\n<code>${escapeHtml(url)}</code>\nGiriş ekranından kendin giriş yaparsın. Yeni build sonrası aynı link çalışmaya devam eder; kapatmak için /preview stop.`,
+      { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+    );
+  }
+
+  /** /preview [build|stop] — Flutter web build'ini telefondan açılacak bir linkle yayınla (Claude çalışmaz). */
+  let previewBusy = false;
+  bot.command(["preview", "onizle", "önizle"], async (ctx) => {
+    const arg = (ctx.match ?? "").trim();
+    const chatId = ctx.chat.id;
+    if (arg === "stop" || arg === "kapat") {
+      files.clearPreview();
+      await ctx.reply("🛑 Önizleme kapatıldı; eski link artık çalışmaz.");
+      return;
+    }
+    if (arg === "status" || arg === "durum") {
+      await ctx.reply("📱 Önizleme: " + (files.previewStatus() ?? "kapalı"));
+      return;
+    }
+    if (previewBusy) {
+      await ctx.reply("⏳ Web build sürüyor; bitince link gelecek.");
+      return;
+    }
+    previewBusy = true;
+    const progress = new ProgressMessage(bot, chatId, `preview${arg === "build" ? " (build)" : ""}`, 12);
+    progress.push("web build kontrol ediliyor (değiştiyse 1-3 dk)…");
+    const child = spawn("/app/scripts/web-build.sh", arg === "build" ? ["--force"] : [], { cwd: config.repoDir, env: process.env });
+    const tail: string[] = [];
+    let built = "";
+    let buf = "";
+    const onLine = (line: string) => {
+      const t = line.replace(/\s+$/, "");
+      if (!t.trim()) return;
+      tail.push(t);
+      if (tail.length > 25) tail.shift();
+      const m = t.match(/^WEB: (\S+) (built|cached)$/);
+      if (m) built = m[2];
+      else progress.push(t.replace(/^\[web\]\s*/, ""));
+    };
+    const feed = (chunk: Buffer) => {
+      buf += chunk.toString("utf8");
+      const parts = buf.split(/\r?\n/);
+      buf = parts.pop() ?? "";
+      parts.forEach(onLine);
+    };
+    child.stdout.on("data", feed);
+    child.stderr.on("data", feed);
+    child.on("close", async (code) => {
+      if (buf) onLine(buf);
+      previewBusy = false;
+      if (code !== 0 || !built) {
+        await progress.close(`hata (çıkış ${code})`);
+        await new Sender(bot, chatId).sendPlain("❌ Web build başarısız. Son satırlar:\n" + tail.slice(-15).join("\n"));
+        return;
+      }
+      await progress.close(built === "built" ? "build tamam" : "build güncel");
+      await publishPreview(chatId, built === "built" ? "yeni build" : "mevcut build");
+    });
+  });
+
+  /** /ss [rota…] [build] [hash] [desktop] [full] — Flutter web build'ini headless Chromium'da açıp ekran görüntüsü al (Claude çalışmaz). */
+  let ssBusy = false;
+  bot.command(["ss", "screenshot"], async (ctx) => {
+    const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    const flags: string[] = [];
+    const routes: string[] = [];
+    for (const a of args) {
+      if (a === "build") flags.push("--build");
+      else if (a === "hash") flags.push("--hash");
+      else if (a === "desktop") flags.push("--desktop");
+      else if (a === "full") flags.push("--full");
+      else if (a.startsWith("--")) flags.push(a);
+      else routes.push(a);
+    }
+    if (ssBusy) {
+      await ctx.reply("⏳ Zaten ekran görüntüsü alınıyor; bitince gelecek.");
+      return;
+    }
+    ssBusy = true;
+    const chatId = ctx.chat.id;
+    const progress = new ProgressMessage(bot, chatId, `screenshot ${routes.join(" ") || "(CLAUDE.md rotaları)"}`, 12);
+    progress.push("web build kontrol ediliyor (değiştiyse 1-3 dk)…");
+    const child = spawn("/app/scripts/screenshot.sh", [...routes, ...flags], { cwd: config.repoDir, env: process.env });
+    const shots: { file: string; caption: string }[] = [];
+    const errs: string[] = [];
+    const tail: string[] = [];
+    let buf = "";
+    const onLine = (line: string) => {
+      const t = line.replace(/\s+$/, "");
+      if (!t.trim()) return;
+      tail.push(t);
+      if (tail.length > 25) tail.shift();
+      let m: RegExpMatchArray | null;
+      if ((m = t.match(/^SHOT: (\S+) (.*)$/))) shots.push({ file: m[1], caption: m[2] });
+      else if ((m = t.match(/^SHOTERR: (\S+) (.*)$/))) errs.push(`${m[1]}: ${m[2]}`);
+      else if (/^SHOTS: /.test(t)) return;
+      else progress.push(t.replace(/^\[shot\]\s*/, ""));
+    };
+    const feed = (chunk: Buffer) => {
+      buf += chunk.toString("utf8");
+      const parts = buf.split(/\r?\n/);
+      buf = parts.pop() ?? "";
+      parts.forEach(onLine);
+    };
+    child.stdout.on("data", feed);
+    child.stderr.on("data", feed);
+    child.on("close", async (code) => {
+      if (buf) onLine(buf);
+      ssBusy = false;
+      if (!shots.length) {
+        await progress.close(`hata (çıkış ${code})`);
+        await new Sender(bot, chatId).sendPlain("❌ Ekran görüntüsü alınamadı. Son satırlar:\n" + tail.slice(-15).join("\n"));
+        return;
+      }
+      await progress.close(`${shots.length} görüntü${errs.length ? `, ${errs.length} hata` : ""}`);
+      try {
+        await sendPhotos(chatId, shots);
+      } catch (e: any) {
+        await bot.api.sendMessage(chatId, `❌ gönderilemedi: ${e?.description ?? e?.message ?? e}`).catch(() => undefined);
+      }
+      if (errs.length) await bot.api.sendMessage(chatId, "⚠️ Alınamayan rotalar:\n" + errs.join("\n")).catch(() => undefined);
+    });
   });
 
   /** Son build'leri linkleriyle listele. */
@@ -164,6 +321,13 @@ export function createBot(agent: Agent, files: FileServer): Bot {
     try {
       const dir = path.join(config.repoDir, ".agent", "outbox");
       const sent = path.join(config.repoDir, ".agent", "sent");
+      const req = path.join(config.repoDir, ".agent", "preview.request");
+      if (fs.existsSync(req)) {
+        const note = fs.readFileSync(req, "utf8").trim().slice(0, 80);
+        fs.unlinkSync(req);
+        await publishPreview(chatId, note || undefined);
+        n++;
+      }
       if (!fs.existsSync(dir)) return 0;
       const files = fs
         .readdirSync(dir)
@@ -174,7 +338,8 @@ export function createBot(agent: Agent, files: FileServer): Bot {
         // yazılması bitmemiş dosyayı gönderme (son 3 sn içinde değişmişse bekle)
         if (Date.now() - fs.statSync(f).mtimeMs < 3000) continue;
         try {
-          await sendFile(chatId, f);
+          if (IMG_RE.test(f)) await sendPhotos(chatId, [{ file: f }]);
+          else await sendFile(chatId, f);
           n++;
         } catch (e: any) {
           await bot.api.sendMessage(chatId, `❌ ${path.basename(f)} gönderilemedi: ${e?.description ?? e?.message ?? e}`).catch(() => undefined);
@@ -527,6 +692,16 @@ export function createBot(agent: Agent, files: FileServer): Bot {
       ctx.chat.id,
       "`bootstrap-env` skill'ini uygula: repoyu analiz et, gereken SDK/araçları tespit et, eksikleri $SDK_HOME altına kur, env.sh'ı güncelle ve doğrula. Sonunda kısa bir rapor ver.",
       { title: "bootstrap-env" },
+    );
+  });
+
+  bot.command(["karakter", "character"], async (ctx) => {
+    const extra = (ctx.match || "").toString().trim();
+    void runPrompt(
+      ctx.chat.id,
+      "`character` skill'ini uygula: repo için karakter dosyasını (CLAUDE.md) üret ya da güncelle; taslağı .agent/outbox'a koy, onay al, agent/character dalında commit'le ve PR onayı iste." +
+        (extra ? ` Kullanıcı notu: ${extra}` : ""),
+      { title: "character", fresh: true },
     );
   });
 
