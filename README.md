@@ -115,10 +115,28 @@ container açılışı: scripts/sdk-env.sh → /data/sdks/env.sh  (BASH_ENV; aja
 ```
 
 - Aynı host'taki tüm ajan container'ları (farklı repolar) aynı volume'u paylaşır.
-- Tespit: `.fvmrc` / `.fvm/fvm_config.json` / `.tool-versions` / `pubspec.yaml`, `go.mod` (`toolchain`), `.nvmrc` /
-  `engines.node`, `android/app/build.gradle*` (`compileSdk`, `jvmTarget`), `rust-toolchain*`. Sürüm yoksa güncel
-  stable çözümlenir ve sabitlenir.
-- Elle: `.env` → `SDKS=flutter:3.24.3,jdk:17,android:34` (tespiti ezer) · `SDKS=none` (kapat).
+- **Sürümler bilgisayarında projeyi build edenlerle aynı olmalı.** En sade yol: hedef repoya sürümleri yazan
+  bir dosya koymak; container tahmin yapmadan doğrudan o volume'ları bağlar. İki biçim tanınır:
+
+  `.tool-versions` (asdf/mise standardı — tavsiye edilen):
+  ```
+  flutter 3.24.5-stable
+  java temurin-17.0.12+7
+  golang 1.22.5
+  nodejs 20.11.1
+  ```
+  `.sdks` (bu projenin kendi biçimi; Android compileSdk gibi asdf'te olmayanlar için):
+  ```
+  flutter 3.24.5
+  jdk 17
+  android 34
+  ```
+  Kaynak sırası: `.sdks` → `.env SDKS=flutter:3.24.5,jdk:17,android:34` (sihirbaz repoyu tarayıp bulduğu her SDK
+  için sürümü önerir, sen onaylarsın; `.sdks`'i push etmeyi de teklif eder) → `.tool-versions` / `.fvmrc` →
+  tahmin (`pubspec.yaml`'daki Dart sürümünden Flutter, Gradle/AGP'den JDK, `compileSdk`, `go.mod`, `.nvmrc`,
+  `rust-toolchain`). Tahmin yalnızca öncekiler yoksa devreye girer; `/init` başarılı build'den sonra pin
+  dosyası eklemeyi önerir. Android compileSdk her durumda `build.gradle`'dan okunur (ya da `.sdks` / `ANDROID_API`).
+- `SDKS=none` provizyonu kapatır; `./up.sh sdk` hangi kaynağın kullanıldığını ve bağlı volume'ları gösterir.
 - Görüntüle: `./up.sh sdk` · Telegram `/sdk`. Sil: `docker volume rm sdk-flutter-3.24.3`.
 - Ajan çalışırken ek bir SDK'ya ihtiyaç duyarsa `bootstrap-env` onu container'a özel `/data/sdks/…`'e kurar; bir
   sonraki `./up.sh` bunu indirmeden paylaşımlı volume'a terfi ettirir.

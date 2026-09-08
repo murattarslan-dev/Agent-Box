@@ -11,6 +11,22 @@ source "$(dirname "${BASH_SOURCE[0]}")/sdk-lib.sh"
 REPO="${1:?repo dizini}"; RAW=0; [[ "${2:-}" == --raw ]] && RAW=1
 cd "$REPO"
 
+# ---------- 0) Repo'da .sdks varsa tek kaynak odur (tahmin yok) ----------
+#   # yorum satırı
+#   flutter 3.24.5      (ya da flutter:3.24.5 / flutter=3.24.5)
+#   jdk 17
+#   android 34
+SDKS_FILE=""
+for f in .sdks sdks.txt .sdk-versions; do [[ -f "$f" ]] && { SDKS_FILE="$f"; break; }; done
+if [[ -n "$SDKS_FILE" ]]; then
+  echo "# kaynak: $SDKS_FILE" >&2
+  sed -E 's/#.*//; s/[[:space:]]+/ /g; s/^ //; s/ $//; s/[:=]/ /' "$SDKS_FILE" | grep -v '^$' | while read -r n v; do
+    if (( RAW )); then echo "$n ${v:-stable}"; else echo "$n $(resolve_version "$n" "${v:-}")"; fi
+  done
+  exit 0
+fi
+echo "# kaynak: tahmin (repoda .sdks yok)" >&2
+
 declare -A WANT=()
 need() { [[ -n "${WANT[$1]:-}" ]] || WANT[$1]="$2"; }   # ilk bulunan kazanır
 has()  { [[ -e "$1" ]]; }
@@ -26,9 +42,18 @@ tool_versions() {  # .tool-versions / asdf → "flutter 3.24.3-stable" → 3.24.
 # ---------- Flutter / Dart ----------
 if has pubspec.yaml; then
   if grep -qE '^\s+sdk:\s*flutter\s*$|^\s+flutter:\s*$' pubspec.yaml; then
-    v="$(jq -r '.flutter // empty' .fvmrc 2>/dev/null || true)"
-    [[ -z "$v" ]] && v="$(jq -r '.flutterSdkVersion // empty' .fvm/fvm_config.json 2>/dev/null || true)"
+    # Öncelik: FLUTTER_VERSION env (sihirbaz / .env) > .fvmrc > fvm_config > .tool-versions
+    #          > pubspec.yaml environment.sdk Dart alt sınırı (projenin doğduğu sürüm) > pubspec.lock > stable
+    v="${FLUTTER_VERSION:-}"
+    [[ -z "$v" ]] && v="$(grep -oE '"flutter"[[:space:]]*:[[:space:]]*"[^"]+"' .fvmrc 2>/dev/null | grep -oE '"[^"]+"$' | tr -d '"' || true)"
+    [[ -z "$v" ]] && v="$(grep -oE '"flutterSdkVersion"[[:space:]]*:[[:space:]]*"[^"]+"' .fvm/fvm_config.json 2>/dev/null | grep -oE '"[^"]+"$' | tr -d '"' || true)"
     [[ -z "$v" ]] && v="$(tool_versions flutter)"
+    if [[ -z "$v" ]]; then
+      # environment:\n  sdk: ^3.5.4  |  sdk: ">=3.5.4 <4.0.0"  |  sdk: '>=3.5.4 <4.0.0'
+      dart_lo="$(awk '/^environment:/{f=1;next} f&&/^[^ ]/{f=0} f&&/^[ \t]+sdk:/{print; exit}' pubspec.yaml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+      [[ -z "$dart_lo" ]] && dart_lo="$(awk '/^sdks:/{f=1;next} f&&/^[ \t]+dart:/{print; exit}' pubspec.lock 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+      [[ -n "$dart_lo" ]] && v="dart:$dart_lo"
+    fi
     need flutter "${v:-stable}"
   else
     v="$(tool_versions dart)"
@@ -45,13 +70,22 @@ elif has settings.gradle || has settings.gradle.kts || has build.gradle || has b
 fi
 if [[ -n "$android_root" ]]; then
   compile="$(grep -rhoE 'compileSdk(Version)?\s*[=(]?\s*[0-9]+' "$android_root"/app/build.gradle* "$android_root"/build.gradle* 2>/dev/null | grep -oE '[0-9]+$' | sort -n | tail -1 || true)"
-  jdk="$(tool_versions java)"; [[ -z "$jdk" ]] && jdk="$(rd .java-version | tr -d '[:space:]')"
+  jdk="${JDK_VERSION:-}"
+  [[ -z "$jdk" ]] && jdk="$(tool_versions java)"; [[ -z "$jdk" ]] && jdk="$(rd .java-version | tr -d '[:space:]')"
+  if [[ -z "$jdk" ]]; then
+    # Gradle wrapper + AGP sürümünden JDK: Gradle < 7.3 ya da AGP < 7.2 → 11; aksi halde 17 (AGP 8.x/Gradle 8.x ile uyumlu)
+    gw="$(grep -oE 'gradle-[0-9]+\.[0-9]+(\.[0-9]+)?' "$android_root"/gradle/wrapper/gradle-wrapper.properties 2>/dev/null | head -1 | sed 's/gradle-//' || true)"
+    agp="$(grep -rhoE 'com\.android\.(application|library|tools\.build:gradle)[^0-9]*[0-9]+\.[0-9]+(\.[0-9]+)?' "$android_root"/settings.gradle* "$android_root"/build.gradle* 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -V | tail -1 || true)"
+    if [[ -n "$gw" ]] && [[ "$(printf '%s\n' "$gw" 7.3 | sort -V | head -1)" != 7.3 ]]; then jdk=11
+    elif [[ -n "$agp" ]] && [[ "$(printf '%s\n' "$agp" 7.2 | sort -V | head -1)" != 7.2 ]]; then jdk=11
+    fi
+  fi
   if [[ -z "$jdk" ]]; then
     jt="$(grep -rhoE '(jvmTarget|sourceCompatibility|targetCompatibility)\s*[=:]?\s*(JavaVersion\.VERSION_)?["'"'"']?[0-9_]+' "$android_root"/app/build.gradle* 2>/dev/null | grep -oE '[0-9]+(_[0-9]+)?$' | sed 's/^1_//' | sort -n | tail -1 || true)"
     jdk="${jt:-17}"; (( ${jdk%%.*} < 17 )) && jdk=17   # AGP 8+ → JDK 17 şart
   fi
   need jdk "${jdk%%.*}"
-  need android "${compile:-35}"
+  need android "${ANDROID_API:-${compile:-35}}"
 fi
 
 # ---------- Go ----------

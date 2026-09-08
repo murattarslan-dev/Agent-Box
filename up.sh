@@ -57,7 +57,7 @@ done < .env
 : "${IMAGE:=claude-telegram-agent:latest}"
 : "${K8S_NAMESPACE:=claude-agent}"
 : "${K8S_STORAGE_SIZE:=20Gi}"
-export IMAGE DATA_PATH K8S_NAMESPACE REPO_URL REPO_TOKEN GIT_PROVIDER SDKS K8S_STORAGE_CLASS K8S_SDK_ACCESS_MODE IMAGE_PULL_POLICY
+export IMAGE DATA_PATH K8S_NAMESPACE REPO_URL REPO_TOKEN GIT_PROVIDER SDKS K8S_STORAGE_CLASS K8S_SDK_ACCESS_MODE IMAGE_PULL_POLICY FLUTTER_VERSION JDK_VERSION ANDROID_API
 SDKV="./scripts/sdk-volumes.sh"
 SDK_LIST=".sdk-list"   # tespit edilen "isim sürüm" satırları (üretilir)
 
@@ -156,7 +156,8 @@ docker_action() {
     shell)   docker exec -it claude-telegram-agent bash ;;
     status)  docker ps --filter name=claude-telegram-agent --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
              docker exec claude-telegram-agent cat /data/state.json 2>/dev/null || true ;;
-    sdk)     info "Host'taki SDK volume'ları:"; "$SDKV" list
+    sdk)     if [[ -n "${SDKS:-}" ]]; then info "SDK kaynağı: .env SDKS=$SDKS"; elif [[ -f "$DATA_PATH/repo/.sdks" ]]; then info "SDK kaynağı: repo/.sdks"; sed 's/^/     /' "$DATA_PATH/repo/.sdks"; else info "SDK kaynağı: tahmin (repoda .sdks yok, .env SDKS boş)"; fi
+             info "Host'taki SDK volume'ları:"; "$SDKV" list
              info "Container'da bağlı olanlar:"; docker exec claude-telegram-agent /app/scripts/sdk-env.sh --list 2>/dev/null || warn "container çalışmıyor"
              echo "   Silmek için: docker volume rm sdk-<isim>-<sürüm>" ;;
   esac

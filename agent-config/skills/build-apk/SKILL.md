@@ -38,7 +38,7 @@ Hiçbiri sığmazsa en küçüğünü `APK:` ile verir ve `ANALYZE:` satırları
      - Son çare: `flutter build apk --analyze-size --target-platform android-arm64` ile ayrıntılı rapor.
    - `🐛 Debug olsun` — mod ne olursa olsun `debug --limit 9999` (büyük, link ile).
 
-5. **Hata varsa** — build çıktısının son 30 satırı: `key.properties`/keystore isteyen release yapılandırması (script otomatik profile'a düşer; kalıcı çözüm için release'de debug imzasına izin veren değişiklik önerebilirsin — onay gerekir), Gradle/AGP–JDK uyumsuzluğu (JDK 17 bağlı), `pub get` çözümleme hatası. Küçük ve kesin bir düzeltme bile **plan onayı** gerektirir.
+5. **Hata varsa** — build çıktısının son 30 satırı. Gradle/AGP/Java sürüm hataları (`Minimum supported Gradle version`, `requires Java 17`, `Unsupported class file major version`) → Flutter sürümü projeninkiyle uyuşmuyor demektir: gradle-wrapper'ı yükseltmeye kalkma; `bootstrap-env`'deki "Sürüm uyumsuzluğu" adımını uygula (kullanıcının makinesindeki sürüm → repoya `.sdks` ya da `.env` `SDKS`). Diğerleri: `key.properties`/keystore isteyen release yapılandırması (script otomatik profile'a düşer; kalıcı çözüm için release'de debug imzasına izin veren değişiklik önerebilirsin — onay gerekir), Gradle/AGP–JDK uyumsuzluğu (JDK 17 bağlı), `pub get` çözümleme hatası. Küçük ve kesin bir düzeltme bile **plan onayı** gerektirir.
 
 ## Outbox kuralı (genel)
 

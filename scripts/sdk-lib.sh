@@ -39,10 +39,19 @@ _download() {  # url out
 # ---- sürüm çözümleyiciler: "stable"/"latest"/kısmi sürümü sabit sürüme çevirir ----
 # Ağ yoksa girdiyi olduğu gibi döndürür (volume adı yine deterministik kalır).
 
-resolve_flutter() {   # stable | 3.24 | 3.24.3
+resolve_flutter() {   # stable | 3.24 | 3.24.3 | dart:3.5.4  (dart:X → o Dart'ı taşıyan son stable Flutter)
   local want="$1" json
   [[ "$want" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && { echo "$want"; return; }
-  json="$(_fetch https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json 2>/dev/null)" || { echo "$want"; return; }
+  json="$(_fetch https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json 2>/dev/null)" || { echo "${want#dart:}"; return; }
+  if [[ "$want" == dart:* ]]; then
+    # pubspec'teki Dart alt sınırı (ör. 3.5.4) → dart_sdk_version'ı aynı major.minor olan en yeni stable Flutter
+    local d="${want#dart:}" mm; mm="$(cut -d. -f1,2 <<<"$d")"
+    local r; r="$(echo "$json" | jq -r --arg mm "$mm." '[.releases[] | select(.channel=="stable" and (.dart_sdk_version // "" | startswith($mm)))] | sort_by(.release_date) | last | .version // empty')"
+    if [[ -n "$r" ]]; then echo "$r"; return; fi
+    # bulunamadı (çok yeni/çok eski Dart): en yeni stable'a düş
+    sdk_warn "Dart $d için eşleşen Flutter bulunamadı; en yeni stable seçiliyor"
+    want=stable
+  fi
   if [[ "$want" == stable || "$want" == latest ]]; then
     echo "$json" | jq -r '.current_release.stable as $h | .releases[] | select(.hash==$h) | .version' | head -1
   else  # 3.24 → en yeni 3.24.x stable

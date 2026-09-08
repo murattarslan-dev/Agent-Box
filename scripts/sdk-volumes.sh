@@ -27,6 +27,7 @@ sdk_size() {  # k8s PVC boyutu
 cmd_detect() {
   if [[ -n "${SDKS:-}" ]]; then
     [[ "$SDKS" == none ]] && return 0
+    sdk_log "kaynak: .env SDKS"
     # "flutter:3.24.3,jdk:17,android"  → satırlar (sürüm boşsa çözümle)
     tr ',' '\n' <<<"$SDKS" | sed 's/^ *//; s/ *$//' | grep -v '^$' | while IFS=: read -r n v; do
       echo "$n $(resolve_version "$n" "${v:-}")"
@@ -36,7 +37,7 @@ cmd_detect() {
   local repo_mount=()
   [[ -d "$DATA_PATH/repo/.git" ]] && repo_mount=(-v "$(cd "$DATA_PATH/repo" && pwd):/repo:ro")
   docker run --rm "${repo_mount[@]}" \
-    -e REPO_URL -e REPO_TOKEN -e GIT_PROVIDER \
+    -e REPO_URL -e REPO_TOKEN -e GIT_PROVIDER -e FLUTTER_VERSION -e JDK_VERSION -e ANDROID_API \
     --entrypoint /app/scripts/sdk-detect-remote.sh "$IMAGE"
 }
 

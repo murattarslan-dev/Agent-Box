@@ -41,7 +41,9 @@ Docker Desktop ya çalışmıyor ya da bu WSL dağıtımına bağlı değil.
 
 **Yarım kalan SDK** — volume var ama `.installed` yok; bir sonraki `./up.sh` kurulumu baştan tekrarlar. İstersen sil: `docker volume rm sdk-<isim>-<sürüm>`.
 
-**Tespit yanlış sürüm buldu** — `.env`'e `SDKS=flutter:3.24.3,jdk:17,android:34` yaz; tespit tamamen atlanır. Repo'da `.fvmrc` ya da `.tool-versions` varsa tespit onları önceler.
+**Build "Minimum supported Gradle version…", "AGP requires Java 17", "Unsupported class file major version" diyor; oysa bilgisayarımda sorunsuz build oluyor** — container'a projeninkinden farklı bir Flutter sürümü kurulmuş (repoda pin yoksa tahmin edilir). Gradle'ı yükseltme; bilgisayarında `flutter --version` de ve repo köküne `.tool-versions` (`flutter 3.24.5-stable`, `java temurin-17.0.12+7`) ya da `.sdks` (`flutter 3.24.5` / `jdk 17` / `android 34`) ekle ya da `.env`'e `SDKS=flutter:3.24.5,jdk:17,android:34` yaz, `./up.sh`. Sihirbaz kurulumda bunu kendisi sorar ve `.sdks`'i push etmeyi teklif eder; `/init` de önerir.
+
+**Tespit yanlış sürüm buldu** — repoya `.sdks` koy ya da `.env`'e `SDKS=…` yaz; ikisi de tahmini tamamen devre dışı bırakır. `./up.sh sdk` çıktısındaki "kaynak:" satırı hangisinin kullanıldığını söyler.
 
 **`Android SDK için JDK gerekli`** — `SDKS` listesinde `android` var ama `jdk` yok. `jdk:17` ekle (sıra önemli değil, script jdk'yı önce kurar).
 

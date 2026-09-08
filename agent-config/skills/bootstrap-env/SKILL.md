@@ -36,7 +36,20 @@ Hazır komutlar (PATH'te): `sdk-detect <repo>`, `sdk-install <isim> <sürüm> [h
 
 4. **Repo'nun gerçek build/test komutunu çalıştır** (`bash -lc` ile yeni kabukta): `flutter pub get && flutter test | tail -30`, `go build ./... && go test ./... | tail -30`, `./gradlew assembleDebug | tail -20` vb.
 
-5. **Raporla**: `.agent/ENV.md` (bağlı SDK'lar + sürümler, build/test komutları, eksik kalanlar) ve Telegram'a ≤ 10 satır. Container'a özel kurulum yaptıysan ekle: *"`sdk-<isim>-<sürüm>` bir sonraki `./up.sh`'ta paylaşımlı volume'a alınacak."*
+5. **Sürümleri pinle (build başarılıysa)** — repo kökünde `.sdks` yoksa, çalışan sürümleri oraya yazmayı **öner** (repo değişikliği → `plan-and-approve` ile onay). Biçim, satır başına `isim sürüm`:
+   ```
+   # SDK sürümleri — claude-telegram-agent bu dosyadan kurar
+   flutter 3.24.5
+   jdk 17
+   android 34
+   ```
+   `.sdks` varsa `up.sh` tahmin yapmaz, doğrudan bu volume'ları bağlar; her makine/container aynı sürümü kullanır. Flutter için ayrıca `.fvmrc` de eklenebilir (fvm kullananlar için).
+
+6. **Raporla**: `.agent/ENV.md` (bağlı SDK'lar + sürümler, build/test komutları, eksik kalanlar) ve Telegram'a ≤ 10 satır. Container'a özel kurulum yaptıysan ekle: *"`sdk-<isim>-<sürüm>` bir sonraki `./up.sh`'ta paylaşımlı volume'a alınacak."*
+
+## Sürüm uyumsuzluğu belirtileri (önce bunu kontrol et)
+
+`Gradle … requires`, `Minimum supported Gradle version is …`, `AGP … requires Java …`, `Unsupported class file major version`, `Your project's Gradle version is incompatible with the Java version`: neredeyse her zaman **Flutter sürümü projeninkinden daha yeni/eski** demektir, Gradle'ı yükseltmek değil. Çözüm sırası: (a) `sdk-env --list` ile bağlı Flutter'a bak, `.agent/ENV.md`'ye not düş; (b) kullanıcıya AskUserQuestion ile bilgisayarındaki sürümü sor (`flutter --version`) ve repoya `.sdks` yazmayı öner (onaylı) ya da `.env`'e `SDKS=flutter:<sürüm>,jdk:17,android:34` yazıp `./up.sh` demesini iste — doğru sürüm bağlanınca gradle-wrapper/AGP'ye dokunmadan build olur; (c) ancak kullanıcı "projeyi yeni Flutter'a taşı" derse gradle-wrapper/AGP/JDK yükseltmesini plan olarak sun.
 
 ## Kurallar
 

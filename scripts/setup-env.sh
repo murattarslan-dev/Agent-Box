@@ -4,7 +4,8 @@
 #   ./up.sh setup      → yeniden çalıştır (mevcut .env yedeklenir)
 # Gereksinim: bash, curl. (python3 varsa JSON daha sağlam ayrıştırılır; yoksa grep ile idare eder.)
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$HERE/.."
 
 c_b=$'\e[1m'; c_dim=$'\e[2m'; c_grn=$'\e[32m'; c_ylw=$'\e[33m'; c_red=$'\e[31m'; c_cyan=$'\e[36m'; c_off=$'\e[0m'
 say()  { printf '%s\n' "$*"; }
@@ -47,7 +48,7 @@ say ""
 say "${c_b}╭──────────────────────────────────────────────╮${c_off}"
 say "${c_b}│  claude-telegram-agent · kurulum sihirbazı   │${c_off}"
 say "${c_b}╰──────────────────────────────────────────────╯${c_off}"
-say "  5 değer soracağım; her birini nereden alacağını yanında yazıyorum."
+say "  5 değer + SDK sürümleri soracağım; her birini nereden alacağını yanında yazıyorum."
 say "  Yapıştırdığın token'lar ekranda görünmez. Çıkmak için Ctrl+C."
 
 if [[ -f .env ]]; then
@@ -181,6 +182,93 @@ while true; do
   fi
 done
 
+# ---------- 6) SDK sürümleri ----------
+# Kural: container, senin projeyi build ettiğin sürümleri birebir kurar. Kaynak sırası:
+#   repo'daki .sdks dosyası (kalıcı, tavsiye edilen) > .env SDKS (bu sihirbaz yazar) > tahmin
+step "6/6  SDK sürümleri  (SDKS)"
+hint "Repo klonlanıp hangi SDK'ların kullanıldığına bakılır; her biri için sürüm önerilir, sen onaylarsın."
+hint "Sonuç .env'e (SDKS=) yazılır; istersen repoya .sdks dosyası olarak da commit'lenir — o zaman tahmin hiç gerekmez."
+SDKS=""
+host_flutter() {  # makinedeki Flutter'ı bul: PATH, WSL'den Windows PATH, fvm
+  local out=""
+  if command -v flutter >/dev/null 2>&1; then out="$(flutter --version --machine 2>/dev/null || true)"; fi
+  if [[ -z "$out" ]] && command -v cmd.exe >/dev/null 2>&1; then out="$(cmd.exe /c "flutter --version --machine" 2>/dev/null | tr -d '\r' || true)"; fi
+  if [[ -z "$out" ]] && command -v fvm >/dev/null 2>&1; then out="$(fvm flutter --version --machine 2>/dev/null || true)"; fi
+  json_get "$out" "d['frameworkVersion']" '"frameworkVersion": *"[^"]+"'
+}
+CLONE=""
+if (( VERIFY )) && command -v git >/dev/null 2>&1; then
+  CLONE="$(mktemp -d)/repo"
+  case "$GIT_PROVIDER" in gitlab) CU=oauth2 ;; *) CU=x-access-token ;; esac
+  printf '  klonlanıyor… '
+  if git -c credential.helper= -c "credential.helper=!f(){ echo username=$CU; echo password=$REPO_TOKEN; }; f" \
+       clone --quiet --depth 1 "$REPO_URL" "$CLONE" 2>/dev/null; then ok "tamam"
+  else bad "klon başarısız (token/URL?); SDK'lar elle sorulacak"; CLONE=""; fi
+fi
+
+declare -a SDK_NAMES_FOUND=() SDK_VERS_FOUND=()
+if [[ -n "$CLONE" && -f "$CLONE/.sdks" ]]; then
+  say "  Repoda ${c_b}.sdks${c_off} var:"
+  sed -E 's/#.*//; /^[[:space:]]*$/d; s/^/    /' "$CLONE/.sdks"
+  if confirm "Bunu kullanayım mı?"; then
+    SDKS="$(sed -E 's/#.*//; s/[[:space:]]+/ /g; s/^ //; s/ $//; s/[:=]/ /' "$CLONE/.sdks" | grep -v '^$' | awk '{print $1":"$2}' | paste -sd, -)"
+  fi
+fi
+if [[ -z "$SDKS" ]]; then
+  if [[ -n "$CLONE" ]]; then
+    # tahmin scripti hangi SDK'lar + önerilen sürüm (ağsız, --raw)
+    while read -r n v; do [[ -n "$n" && "$n" != \#* ]] && { SDK_NAMES_FOUND+=("$n"); SDK_VERS_FOUND+=("$v"); }; done \
+      < <(bash "$HERE/sdk-detect.sh" "$CLONE" --raw 2>/dev/null || true)
+  fi
+  if (( ${#SDK_NAMES_FOUND[@]} == 0 )); then
+    hint "Repo taranamadı. Kullanılan SDK'ları elle yaz: örn. flutter:3.24.5,jdk:17,android:34  (boş = tahmin; none = SDK yok)"
+    printf '  %sSDKS%s: ' "$c_cyan" "$c_off"; read -r SDKS || SDKS=""
+    SDKS="${SDKS//[[:space:]]/}"
+  else
+    say "  Bulunan SDK'lar (sürümü onayla ya da düzelt; boş = öneri):"
+    hv="$(host_flutter 2>/dev/null || true)"
+    parts=()
+    for i in "${!SDK_NAMES_FOUND[@]}"; do
+      n="${SDK_NAMES_FOUND[$i]}"; def="${SDK_VERS_FOUND[$i]}"; note=""
+      case "$n" in
+        flutter)
+          if [[ "$hv" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then def="$hv"; note="bu makinedeki flutter --version"
+          elif [[ "$def" == dart:* ]]; then note="pubspec Dart ${def#dart:} → eşleşen Flutter (kesin değil; bilgisayarındaki 'flutter --version' daha iyi)"
+          elif [[ "$def" == stable ]]; then note="pin yok → en yeni stable (projen eskiyse yanlış olabilir)"
+          else note="repodaki pin"; fi ;;
+        jdk)     note="Gradle/AGP sürümüne göre" ;;
+        android) note="compileSdk" ;;
+        go)      note="go.mod" ;;
+        node)    note="engines/.nvmrc (imajda Node 22 var)" ;;
+        rust)    note="rust-toolchain" ;;
+      esac
+      printf '  %s%s%s [%s]%s: ' "$c_cyan" "$n" "$c_off" "$def" "${note:+  ($note)}"
+      read -r v || v=""
+      v="${v//[[:space:]]/}"; [[ -z "$v" ]] && v="$def"
+      [[ "$v" == dart:* ]] && v="${v#dart:}" && v="$(cut -d. -f1,2 <<<"$v")"   # dart:3.5.4 → 3.5 (çözümleyici Flutter'a çevirir)
+      parts+=("$n:$v")
+    done
+    SDKS="$(IFS=,; echo "${parts[*]}")"
+  fi
+fi
+[[ -n "$SDKS" ]] && ok "SDKS=$SDKS"
+
+# .sdks dosyasını repoya yaz (isteğe bağlı, tek küçük commit)
+if [[ -n "$CLONE" && -n "$SDKS" && "$SDKS" != none && ! -f "$CLONE/.sdks" ]]; then
+  if confirm "Bunu repoya '.sdks' dosyası olarak commit'leyip push edeyim mi? (bir daha sorulmaz, her makine aynı sürümü kullanır)"; then
+    { echo "# SDK sürümleri — claude-telegram-agent bu dosyadan kurar (isim sürüm)"; tr ',' '\n' <<<"$SDKS" | tr ':' ' '; } > "$CLONE/.sdks"
+    if ( cd "$CLONE" && git add .sdks && git -c user.name="${GIT_USER_NAME:-Claude Agent}" -c user.email="${GIT_USER_EMAIL:-claude-agent@noreply.local}" commit -qm "Add .sdks (SDK versions for claude-telegram-agent)" \
+         && git -c "credential.helper=!f(){ echo username=$CU; echo password=$REPO_TOKEN; }; f" push -q ); then
+      ok ".sdks push edildi"
+    else
+      warn "push edilemedi (korumalı dal?). Dosyayı elle ekle:"; sed 's/^/    /' "$CLONE/.sdks"
+    fi
+  else
+    hint "İstersen sonra: repoya .sdks ekle →"; tr ',' '\n' <<<"$SDKS" | tr ':' ' ' | sed 's/^/      /'
+  fi
+fi
+[[ -n "$CLONE" ]] && rm -rf "$(dirname "$CLONE")"
+
 # ---------- yaz ----------
 step "Yazılıyor: .env"
 set_kv() {  # dosyada KEY= satırını değiştir ya da ekle
@@ -198,6 +286,7 @@ set_kv TELEGRAM_ALLOWED_USER_IDS "$TELEGRAM_ALLOWED_USER_IDS"
 set_kv REPO_URL "$REPO_URL"
 set_kv REPO_TOKEN "$REPO_TOKEN"
 set_kv GIT_PROVIDER "$GIT_PROVIDER"
+set_kv SDKS "$SDKS"
 chmod 600 .env
 ok ".env hazır (600). Diğer ayarlar (model, AUTO_PR, SDKS…) için: nano .env"
 say ""
