@@ -903,11 +903,19 @@ export function createBot(agent: Agent, files: FileServer): Bot {
       const pr = execFileSync("gh", ["pr", "create", "--head", branch, "--base", config.defaultBranch, "--title", "ci: agent-apk workflow", "--body", "APK artık GitHub Actions'ta üretilir; bot `gh workflow run` ile tetikler, artifact'i indirip Telegram'a gönderir. Container'da JDK/Android/Gradle gerekmez.\n\n🤖 claude-telegram-agent `/apk setup`"], { cwd: config.repoDir, encoding: "utf8" }).trim();
       await bot.api.sendMessage(
         chatId,
-        `✅ Workflow PR'ı açıldı: ${pr}\n\nMerge ettikten sonra:\n1) .env: <code>APK_BUILDER=actions</code> (container'da JDK/Android gerekmez → <code>SDKS=flutter:&lt;sürüm&gt;</code>)\n2) REPO_TOKEN izni: <b>Actions → Read and write</b> (fine-grained PAT'ta ekle)\n3) İsteğe bağlı hız: repo secrets <code>AGENT_WEBHOOK_URL</code>=${escapeHtml((files.baseUrl ?? "https://<bot-adresi>") + "/hook/build")} ve <code>AGENT_WEBHOOK_SECRET</code>=.env'deki <code>BUILD_WEBHOOK_SECRET</code>\n\nSonra <code>/apk</code> Actions'ta build alır; <code>agent/**</code> dallarına push'ta da otomatik koşar ve webhook varsa APK kendiliğinden gelir.`,
+        `✅ Workflow PR'ı açıldı: ${pr}\n\nMerge ettikten sonra:\n1) .env: <code>APK_BUILDER=actions</code> (container'da JDK/Android gerekmez → <code>SDKS=flutter:&lt;sürüm&gt;</code>)\n2) REPO_TOKEN izni: <b>Actions → Read and write</b> (tetikleme + artifact indirme; fine-grained PAT'ta ekle)\n3) İsteğe bağlı hız: repo secrets <code>AGENT_WEBHOOK_URL</code>=${escapeHtml((files.baseUrl ?? "https://<bot-adresi>") + "/hook/build")} ve <code>AGENT_WEBHOOK_SECRET</code>=.env'deki <code>BUILD_WEBHOOK_SECRET</code>\n\nSonra <code>/apk</code> Actions'ta build alır; <code>agent/**</code> dallarına push'ta da otomatik koşar ve webhook varsa APK kendiliğinden gelir.`,
         { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
       );
     } catch (e: any) {
-      await bot.api.sendMessage(chatId, `❌ setup başarısız: ${String(e?.stderr ?? e?.message ?? e).slice(0, 400)}`);
+      const err = String(e?.stderr ?? e?.message ?? e);
+      let hint = "";
+      if (/workflow.*scope|without `workflow`|refusing to allow.*workflow/i.test(err)) {
+        hint =
+          "\n\n➡️ GitHub, workflow dosyası push'una ayrı izin ister. REPO_TOKEN'ı düzenle: fine-grained PAT'ta <b>Workflows: Read and write</b> (Actions'tan ayrı bir satır); classic PAT'ta <code>workflow</code> scope'u. Sonra tekrar /apk setup. Alternatif: dosyayı elle ekle — şablon <code>templates/github/agent-apk.yml</code>, hedef <code>.github/workflows/agent-apk.yml</code>.";
+      } else if (/403|permission|not permitted/i.test(err)) {
+        hint = "\n\n➡️ Token izinlerine bak: Contents RW, Pull requests RW, Workflows RW, Actions RW.";
+      }
+      await bot.api.sendMessage(chatId, `❌ setup başarısız: <pre>${escapeHtml(err.slice(0, 600))}</pre>${hint}`, { parse_mode: "HTML" });
     } finally {
       if (cur && cur !== "HEAD") r("switch", cur);
     }

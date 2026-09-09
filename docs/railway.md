@@ -27,7 +27,9 @@ RAM tepe noktası kaybolur, volume 1.5-2 GB'ta kalır.
 4. **Deploy** — ilk açılışta Flutter SDK arka planda iner (2-5 dk; `/sdk` ile durum, log `/data/logs/sdk-autoinstall.log`).
    Bot bu sırada çalışır; `/status` yazınca cevap gelir.
 5. **Actions workflow'u** — Telegram'da `/apk setup`: hedef repoya `.github/workflows/agent-apk.yml` PR'ı açılır.
-   Merge et. `REPO_TOKEN` (fine-grained PAT) izinlerine **Actions: Read and write** ekle.
+   Merge et. `REPO_TOKEN` (fine-grained PAT) izinleri: **Workflows: Read and write** (workflow dosyasını push için — `/apk setup`
+   bunsuz "refusing to allow a Personal Access Token to create or update workflow" der) ve **Actions: Read and write**
+   (tetikleme + artifact). Classic PAT kullanıyorsan `workflow` scope'u.
 6. **Webhook (isteğe bağlı)** — hedef repo → Settings → Secrets → `AGENT_WEBHOOK_URL=https://<servis>.up.railway.app/hook/build`,
    `AGENT_WEBHOOK_SECRET=<aynı değer>`. Bu olmadan da `/apk` çalışır (bot koşuyu 20 sn'de bir sorgular); webhook ile
    `agent/**` dallarına her push'ta üretilen APK Telegram'a kendiliğinden gelir.

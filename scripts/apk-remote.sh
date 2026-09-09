@@ -4,7 +4,8 @@
 #   apk-remote.sh --run <run_id> [--outbox]        # yalnızca indir (webhook / push tetiklemeli koşular için)
 # Çıktı satırları build-apk.sh ile aynı (bot ayrıştırır):
 #   RUN: <url>     SIZE: <yol> <MB> <mod> <sığdı|büyük>     APK: <yol> <bayt>     ANALYZE: <satır>
-# Gerekli: gh (REPO_TOKEN ile; PAT'ta Actions: Read and write), repoda .github/workflows/$APK_WORKFLOW (→ /apk setup).
+# Gerekli: gh (REPO_TOKEN ile; PAT'ta Actions: Read and write — workflow dosyasını push etmek için ayrıca Workflows: Read and write),
+#          repoda .github/workflows/$APK_WORKFLOW (→ /apk setup).
 set -uo pipefail
 REPO="${REPO_DIR:-/data/repo}"; BUILDS="${DATA_DIR:-/data}/builds"; HOOKS="${DATA_DIR:-/data}/hooks"
 WF="${APK_WORKFLOW:-agent-apk.yml}"; MODE=small; ALL_ABI=false; FLAVOR=""; LIMIT_MB="${APK_LIMIT_MB:-50}"; REF=""; RUN_ID=""; OUTBOX=0

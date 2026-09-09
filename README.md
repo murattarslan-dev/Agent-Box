@@ -27,7 +27,7 @@ ihtiyaç duyduğu SDK'ları kurar ve botu başlatır. Sihirbaz sana şunları so
 | 2 | **Telegram bot token** | Telegram'da **@BotFather** → `/newbot` → `123456789:AAF…` |
 | 3 | **Telegram id'n** | Sihirbaz bulur: bota bir mesaj atarsın, o okur. (Elle: **@userinfobot**) |
 | 4 | **Repo adresi** | GitHub/GitLab → Code → HTTPS: `https://github.com/sen/repo.git` |
-| 5 | **Repo token** | GitHub: [fine-grained token](https://github.com/settings/personal-access-tokens/new) → sadece bu repo, **Contents: RW**, **Pull requests: RW**. GitLab: Project Access Token, role Developer, `api, read_repository, write_repository` |
+| 5 | **Repo token** | GitHub: [fine-grained token](https://github.com/settings/personal-access-tokens/new) → sadece bu repo, **Contents: RW**, **Pull requests: RW** (APK'yı Actions'ta üretecekseniz ayrıca **Workflows: RW** + **Actions: RW**). GitLab: Project Access Token, role Developer, `api, read_repository, write_repository` |
 
 Bittiğinde terminal "Ajan ayakta: Telegram'da @botun sohbetine /status yaz" der. İlk çalıştırma internet hızına
 göre 15 dk – 2 saat sürer (imaj + SDK'lar, tek seferlik); sonraki açılışlar saniyeler.
@@ -231,7 +231,8 @@ başına ücretlendiren yerlerde faturanın büyük kısmı budur. `APK_BUILDER=
 Actions workflow'unda yapılır: bot `gh workflow run` ile tetikler, koşuyu izler, artifact'i indirip Telegram'a gönderir
 (aynı `/apk` komutu, aynı küçültme stratejisi; ajan da `build-apk` skill'inde aynı yolu kullanır). Container'da yalnızca
 Flutter SDK kalır (`SDKS=flutter:<sürüm>`; test/analyze/web önizleme için). Kurulum: Telegram'da `/apk setup` workflow
-PR'ını açar, merge edersin, PAT'a Actions izni eklersin. İsteğe bağlı webhook (`BUILD_WEBHOOK_SECRET` + repo secrets)
+PR'ını açar, merge edersin. PAT izinleri: **Workflows: Read and write** (workflow dosyasını push edebilmek için; GitHub bunu
+Contents'ten ayrı ister) ve **Actions: Read and write** (tetikleme + artifact indirme). İsteğe bağlı webhook (`BUILD_WEBHOOK_SECRET` + repo secrets)
 beklemeyi kısaltır ve `agent/**` dallarına her push'ta üretilen APK'yı kendiliğinden gönderir. Private repoda ayda 2000
 Actions dakikası ücretsiz; cache'li koşu 4-8 dk. Railway kurulumu adım adım: [docs/railway.md](docs/railway.md).
 

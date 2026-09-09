@@ -1,5 +1,20 @@
 import path from "node:path";
 
+/** Yapıştırma kirlerini temizle: CR/LF, baş-son boşluk, çevreleyen tırnak. Sonucu process.env'e geri yazar (Claude Code alt süreci de görsün). */
+function clean(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+  let v = raw.replace(/[\r\n]/g, "").trim();
+  while (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) v = v.slice(1, -1).trim();
+  if (v !== raw) {
+    process.env[name] = v;
+    console.warn(`[config] ${name} temizlendi (boşluk/tırnak/satır sonu kaldırıldı)`);
+  }
+  return v;
+}
+for (const n of ["CLAUDE_CODE_OAUTH_TOKEN", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "REPO_URL", "REPO_TOKEN", "GIT_PROVIDER", "GIT_USER_NAME", "GIT_USER_EMAIL",
+  "CLAUDE_MODEL", "MODEL_REVIEW", "MODEL_EXPLORE", "PUBLIC_BASE_URL", "FILE_LINKS", "SDKS", "APK_BUILDER", "APK_WORKFLOW", "BUILD_WEBHOOK_SECRET", "APP_TEST_TOKEN", "TZ"]) clean(n);
+
 function req(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Eksik env: ${name}`);

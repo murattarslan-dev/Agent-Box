@@ -18,6 +18,25 @@ die() { log "HATA: $*"; exit 1; }
 : "${SCRIPTS_DIR:=/app/scripts}"
 CLAUDE_DIR="${DATA_DIR}/claude"
 
+# ---------- 0) Değerleri temizle ----------
+# Panodan/.env'den/PaaS panelinden gelen değerlerde sık görülen kirler: CR/LF, baş-son boşluk, çevreleyen tırnak.
+# Kullanıcıdan kusursuz yapıştırma beklemek yerine burada bir kez düzeltilir.
+clean_var() {
+  local n="$1" v="${!1:-}" o
+  o="$v"
+  v="${v//$'\r'/}"; v="${v//$'\n'/}"
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  while [[ ${#v} -ge 2 && ( ( "${v:0:1}" == '"' && "${v: -1}" == '"' ) || ( "${v:0:1}" == "'" && "${v: -1}" == "'" ) ) ]]; do
+    v="${v:1:${#v}-2}"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  done
+  [[ "$v" == "$o" ]] || log "$n temizlendi (boşluk/tırnak/satır sonu kaldırıldı)"
+  export "$n=$v"
+}
+for _v in CLAUDE_CODE_OAUTH_TOKEN TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USER_IDS REPO_URL REPO_TOKEN GIT_PROVIDER GIT_USER_NAME GIT_USER_EMAIL \
+          CLAUDE_MODEL MODEL_REVIEW MODEL_EXPLORE PUBLIC_BASE_URL FILE_LINKS SDKS APK_BUILDER APK_WORKFLOW BUILD_WEBHOOK_SECRET APP_TEST_TOKEN TZ; do
+  clean_var "$_v"
+done
+
 # ---------- 1) Zorunlu env ----------
 [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] || die "CLAUDE_CODE_OAUTH_TOKEN boş. Kendi makinende 'claude setup-token' çalıştırıp çıktıyı ver."
 [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]     || die "TELEGRAM_BOT_TOKEN boş (@BotFather)."
