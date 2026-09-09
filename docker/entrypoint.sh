@@ -41,6 +41,11 @@ fi
 export GIT_PROVIDER REPO_HOST REPO_PATH REPO_URL="$CLEAN_URL"
 log "Sağlayıcı: $GIT_PROVIDER  host: $REPO_HOST  repo: $REPO_PATH"
 
+# PaaS volume'ları (Railway vb.) root sahipli bağlanır; agent kullanıcısı yazamaz → bir kez sahiplen (sudo NOPASSWD var)
+if [[ ! -w "$DATA_DIR" ]] && command -v sudo >/dev/null; then
+  log "$DATA_DIR yazılabilir değil; sahiplik agent'a alınıyor…"
+  sudo chown "$(id -u):$(id -g)" "$DATA_DIR" || die "$DATA_DIR sahiplenilemedi"
+fi
 mkdir -p "$DATA_DIR" "$SDK_HOME" "$SDK_HOME/bin" "$CLAUDE_DIR" "$DATA_DIR/agent-notes"
 
 # ---------- 2) Ajanın git kimliği ----------

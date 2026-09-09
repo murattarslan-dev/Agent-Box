@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 #
 # claude-telegram-agent
 # ---------------------
@@ -14,7 +13,7 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN --mount=type=cache,target=/root/.npm npm install
+RUN npm install
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
@@ -101,7 +100,7 @@ COPY --chown=agent:agent docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh ./scripts/*.sh && ln -s /app/scripts/sdk-install.sh /usr/local/bin/sdk-install && ln -s /app/scripts/sdk-env.sh /usr/local/bin/sdk-env && ln -s /app/scripts/sdk-detect.sh /usr/local/bin/sdk-detect
 
 USER agent
-VOLUME ["/data"]
+# Kalıcı veri /data: docker/k8s'te up.sh volume bağlar, Railway'de "Volume" mount path /data (VOLUME direktifi PaaS'larda desteklenmiyor).
 
 # Bash araçları (Claude'un Bash tool'u dahil) her açılışta SDK ortamını yükler.
 ENV BASH_ENV=/data/sdks/env.sh \
