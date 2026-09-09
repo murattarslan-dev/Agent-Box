@@ -63,6 +63,8 @@ export class FileServer {
   private checkTimer?: NodeJS.Timeout;
   private onDownload?: (name: string, entry: Entry) => void;
   private preview?: Preview;
+  /** POST /hook/build (GitHub Actions ping) geldiğinde çağrılır. */
+  onBuildHook?: (payload: Record<string, unknown>) => void;
 
   constructor(private port = config.filePort) {}
 
@@ -220,6 +222,10 @@ export class FileServer {
       this.handlePreview(req, res);
       return;
     }
+    if (req.url === "/hook/build") {
+      this.handleHook(req, res);
+      return;
+    }
     const m = (req.url ?? "").match(/^\/d\/([a-f0-9]{32})\/[^/]+$/);
     if (!m || (req.method !== "GET" && req.method !== "HEAD")) {
       res.writeHead(404, { "content-type": "text/plain" }).end("not found");
@@ -265,6 +271,42 @@ export class FileServer {
       this.onDownload?.(name, e);
     }
     fs.createReadStream(e.file, { start, end }).pipe(res);
+  }
+
+  /** GitHub Actions'tan "koşu bitti" ping'i: gizli anahtar doğrulanır, payload bot'a iletilir. */
+  private handleHook(req: http.IncomingMessage, res: http.ServerResponse) {
+    const secret = config.buildWebhookSecret;
+    if (!secret || req.method !== "POST") {
+      res.writeHead(404, { "content-type": "text/plain" }).end("not found");
+      return;
+    }
+    const given = String(req.headers["x-agent-secret"] ?? "");
+    const a = Buffer.from(given);
+    const b = Buffer.from(secret);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      res.writeHead(401, { "content-type": "text/plain" }).end("unauthorized");
+      return;
+    }
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 64 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(body || "{}");
+      } catch {
+        res.writeHead(400, { "content-type": "text/plain" }).end("bad json");
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+      try {
+        this.onBuildHook?.(payload);
+      } catch (e: any) {
+        console.error("[files] hook işlenemedi:", e?.message ?? e);
+      }
+    });
   }
 
   private handlePreview(req: http.IncomingMessage, res: http.ServerResponse) {

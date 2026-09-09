@@ -53,7 +53,8 @@ Bir görev yaz, ajan şu akışı izler:
 /model [ad] — modeli seç (sonnet / opus / haiku / tam ad)
 /test /lint /build /format /doctor — repo görevini Claude'suz çalıştır (.agent-tasks ya da varsayılan); hata olursa "ajana düzelttir" butonu
 /task [ad] — görev listesi / özel görev
-/apk [small|release|profile|debug] [all] [flavor X] [limit MB] — en küçük APK'yı build et ve gönder (≤50 MB dosya, üstü link)
+/apk [small|release|profile|debug] [all] [flavor X] [limit MB] [ref dal] — en küçük APK'yı build et ve gönder (≤50 MB dosya, üstü link); APK_BUILDER=actions ise GitHub Actions'ta
+/apk setup — hedef repoya Actions workflow'unu PR ile ekle (container'da JDK/Android gerekmez)
 /preview [build|stop] — uygulamayı web olarak yayınla, telefondan açacağın link gönder (girişi kendin yaparsın; token gerekmez)
 /ss [rota…] [build] [hash] [desktop] — Flutter web build'ini telefon boyutunda açıp ekran görüntüsü gönder (emülatörsüz); rotalar CLAUDE.md'den
 /builds — son build'ler ve linkleri
@@ -796,29 +797,35 @@ export function createBot(agent: Agent, files: FileServer): Bot {
   });
 
   let apkBusy = false;
-  bot.command("apk", async (ctx) => {
-    const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
-    const mode = args.find((a) => ["small", "debug", "release", "profile"].includes(a)) ?? "small";
-    const li = args.findIndex((a) => a === "limit" || a === "--limit");
-    const limit = li >= 0 ? args[li + 1] : undefined;
-    const allAbi = args.some((a) => a === "all" || a === "--all-abi" || a === "fat");
-    const fi = args.findIndex((a) => a === "flavor" || a === "--flavor");
-    const flavor = fi >= 0 ? args[fi + 1] : undefined;
+  /**
+   * APK üret ve gönder. builder=local → /app/scripts/build-apk.sh (container'da flutter+gradle);
+   * builder=actions → /app/scripts/apk-remote.sh (GitHub Actions tetikle/izle/indir). İki script de aynı satırları basar.
+   * runId verilirse yalnızca o koşunun artifact'i indirilir (webhook / push tetiklemeli koşular).
+   */
+  async function runApkBuild(chatId: number, opts: { mode?: string; flavor?: string; limit?: string; allAbi?: boolean; ref?: string; runId?: string; note?: string }) {
+    const mode = opts.mode ?? "small";
+    const builder = config.apkBuilder;
     if (apkBusy) {
-      await ctx.reply("⏳ Zaten bir APK build'i sürüyor; bitince gelecek.");
+      await bot.api.sendMessage(chatId, "⏳ Zaten bir APK build'i sürüyor; bitince gelecek.");
       return;
     }
-    if (agent.busy) await ctx.reply("ℹ️ Ajan da çalışıyor; build paralel gidecek, biraz yavaş olabilir.");
+    if (builder === "local" && agent.busy) await bot.api.sendMessage(chatId, "ℹ️ Ajan da çalışıyor; build paralel gidecek, biraz yavaş olabilir.");
     apkBusy = true;
-    const chatId = ctx.chat.id;
-    const progress = new ProgressMessage(bot, chatId, `apk ${mode}${flavor ? " " + flavor : ""}${allAbi ? " (fat)" : ""}`, 12);
-    progress.push(mode === "small" ? "hedef ≤ 50 MB: release → profile → debug, yalnızca arm64 (ilk seferde 10-20 dk)" : "başlıyor… (ilk seferde gradle indirir, 10-20 dk)");
-    const scriptArgs = [mode, ...(allAbi ? ["--all-abi"] : []), ...(flavor ? ["--flavor", flavor] : []), ...(limit ? ["--limit", limit] : [])];
-    const child = spawn("/app/scripts/build-apk.sh", scriptArgs, { cwd: config.repoDir, env: process.env });
+    const title = opts.runId ? `apk (Actions koşusu ${opts.runId})` : `apk ${mode}${opts.flavor ? " " + opts.flavor : ""}${opts.allAbi ? " (fat)" : ""}${builder === "actions" ? " · GitHub Actions" : ""}`;
+    const progress = new ProgressMessage(bot, chatId, title, 12);
+    if (opts.runId) progress.push("artifact indiriliyor…");
+    else if (builder === "actions") progress.push("workflow tetikleniyor; cache'li koşu 4-8 dk, ilk koşu 10-15 dk");
+    else progress.push(mode === "small" ? "hedef ≤ 50 MB: release → profile → debug, yalnızca arm64 (ilk seferde 10-20 dk)" : "başlıyor… (ilk seferde gradle indirir, 10-20 dk)");
+    const script = builder === "actions" ? "/app/scripts/apk-remote.sh" : "/app/scripts/build-apk.sh";
+    const scriptArgs = opts.runId
+      ? ["--run", opts.runId]
+      : [mode, ...(opts.allAbi ? ["--all-abi"] : []), ...(opts.flavor ? ["--flavor", opts.flavor] : []), ...(opts.limit ? ["--limit", opts.limit] : []), ...(opts.ref && builder === "actions" ? ["--ref", opts.ref] : [])];
+    const child = spawn(script, scriptArgs, { cwd: config.repoDir, env: process.env });
     const apks: { file: string; size: number }[] = [];
     const sizes: string[] = [];
     const analyze: string[] = [];
     const tail: string[] = [];
+    let runUrl = "";
     const onLine = (line: string) => {
       const t = line.replace(/\s+$/, "");
       if (!t.trim()) return;
@@ -830,7 +837,10 @@ export function createBot(agent: Agent, files: FileServer): Bot {
         sizes.push(`${m[2]} ${m[1]} MB ${m[3] === "sığdı" ? "✓" : "✗"}`);
         progress.push(`${m[2]}: ${m[1]} MB ${m[3] === "sığdı" ? "✓ sığdı" : "✗ büyük"}`);
       } else if ((m = t.match(/^ANALYZE: (.*)$/))) analyze.push(m[1]);
-      else progress.push(t.replace(/^\s+/, ""));
+      else if ((m = t.match(/^RUN: (\S+)$/))) {
+        runUrl = m[1];
+        progress.push(`koşu: ${runUrl}`);
+      } else progress.push(t.replace(/^\s+/, "").replace(/^\[apk(-ci)?\]\s*/, ""));
     };
     let buf = "";
     const feed = (chunk: Buffer) => {
@@ -846,13 +856,13 @@ export function createBot(agent: Agent, files: FileServer): Bot {
       apkBusy = false;
       if (code !== 0 || !apks.length) {
         await progress.close(`hata (çıkış ${code})`);
-        await new Sender(bot, chatId).sendPlain("❌ APK build başarısız. Son satırlar:\n" + tail.slice(-15).join("\n"));
+        await new Sender(bot, chatId).sendPlain("❌ APK build başarısız. Son satırlar:\n" + tail.slice(-15).join("\n") + (runUrl ? "\n\nKoşu: " + runUrl : ""));
         return;
       }
       await progress.close(`bitti · ${sizes.join(" · ") || apks.length + " apk"}`);
       for (const a of apks) {
         try {
-          await sendFile(chatId, a.file, `${path.basename(a.file)} · ${(a.size / 1048576).toFixed(1)} MB${sizes.length ? " · denemeler: " + sizes.join(", ") : ""}`);
+          await sendFile(chatId, a.file, `${path.basename(a.file)} · ${(a.size / 1048576).toFixed(1)} MB${opts.note ? " · " + opts.note : ""}${sizes.length ? " · denemeler: " + sizes.join(", ") : ""}`);
         } catch (e: any) {
           await bot.api.sendMessage(chatId, `❌ gönderilemedi: ${e?.description ?? e?.message ?? e}`).catch(() => undefined);
         }
@@ -863,7 +873,82 @@ export function createBot(agent: Agent, files: FileServer): Bot {
           .catch(() => undefined);
       }
     });
+  }
+
+  /** /apk setup — hedef repoya Actions workflow'unu PR ile ekle (Claude çalışmaz, bot doğrudan git+gh). */
+  async function apkSetup(chatId: number) {
+    if (config.provider !== "github") {
+      await bot.api.sendMessage(chatId, "APK_BUILDER=actions yalnızca GitHub için; GitLab CI şablonu henüz yok.");
+      return;
+    }
+    const tpl = "/app/templates/github/agent-apk.yml";
+    const rel = path.join(".github", "workflows", config.apkWorkflow);
+    const branch = "agent/ci-apk";
+    const r = (...a: string[]) => git(...a);
+    const dirty = r("status", "--porcelain").trim();
+    if (dirty && !dirty.startsWith("git hata")) {
+      await bot.api.sendMessage(chatId, "Çalışma ağacı kirli; önce ajanın işini bitir/commit'le (/diff ile bak), sonra tekrar /apk setup.");
+      return;
+    }
+    const cur = r("rev-parse", "--abbrev-ref", "HEAD").trim();
+    try {
+      r("fetch", "origin");
+      r("switch", "-C", branch, `origin/${config.defaultBranch}`);
+      fs.mkdirSync(path.join(config.repoDir, ".github", "workflows"), { recursive: true });
+      fs.copyFileSync(tpl, path.join(config.repoDir, rel));
+      r("add", rel);
+      r("commit", "-m", "ci: add agent-apk workflow (APK built on GitHub Actions for claude-telegram-agent)");
+      const push = r("push", "-u", "origin", branch, "--force-with-lease");
+      if (push.startsWith("git hata")) throw new Error(push);
+      const pr = execFileSync("gh", ["pr", "create", "--head", branch, "--base", config.defaultBranch, "--title", "ci: agent-apk workflow", "--body", "APK artık GitHub Actions'ta üretilir; bot `gh workflow run` ile tetikler, artifact'i indirip Telegram'a gönderir. Container'da JDK/Android/Gradle gerekmez.\n\n🤖 claude-telegram-agent `/apk setup`"], { cwd: config.repoDir, encoding: "utf8" }).trim();
+      await bot.api.sendMessage(
+        chatId,
+        `✅ Workflow PR'ı açıldı: ${pr}\n\nMerge ettikten sonra:\n1) .env: <code>APK_BUILDER=actions</code> (container'da JDK/Android gerekmez → <code>SDKS=flutter:&lt;sürüm&gt;</code>)\n2) REPO_TOKEN izni: <b>Actions → Read and write</b> (fine-grained PAT'ta ekle)\n3) İsteğe bağlı hız: repo secrets <code>AGENT_WEBHOOK_URL</code>=${escapeHtml((files.baseUrl ?? "https://<bot-adresi>") + "/hook/build")} ve <code>AGENT_WEBHOOK_SECRET</code>=.env'deki <code>BUILD_WEBHOOK_SECRET</code>\n\nSonra <code>/apk</code> Actions'ta build alır; <code>agent/**</code> dallarına push'ta da otomatik koşar ve webhook varsa APK kendiliğinden gelir.`,
+        { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
+      );
+    } catch (e: any) {
+      await bot.api.sendMessage(chatId, `❌ setup başarısız: ${String(e?.stderr ?? e?.message ?? e).slice(0, 400)}`);
+    } finally {
+      if (cur && cur !== "HEAD") r("switch", cur);
+    }
+  }
+
+  bot.command("apk", async (ctx) => {
+    const args = (ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+    if (args[0] === "setup") {
+      await apkSetup(ctx.chat.id);
+      return;
+    }
+    if (args[0] === "run" && args[1]) {
+      void runApkBuild(ctx.chat.id, { runId: args[1] });
+      return;
+    }
+    const mode = args.find((a) => ["small", "debug", "release", "profile"].includes(a)) ?? "small";
+    const li = args.findIndex((a) => a === "limit" || a === "--limit");
+    const limit = li >= 0 ? args[li + 1] : undefined;
+    const allAbi = args.some((a) => a === "all" || a === "--all-abi" || a === "fat");
+    const fi = args.findIndex((a) => a === "flavor" || a === "--flavor");
+    const flavor = fi >= 0 ? args[fi + 1] : undefined;
+    const ri = args.findIndex((a) => a === "ref" || a === "branch" || a === "--ref");
+    const ref = ri >= 0 ? args[ri + 1] : undefined;
+    void runApkBuild(ctx.chat.id, { mode, flavor, limit, allAbi, ref });
   });
+
+  // GitHub Actions webhook ping'i: süren build varsa polling'i kısaltır; yoksa (push tetiklemeli koşu) APK'yı indirip gönderir.
+  files.onBuildHook = (p) => {
+    const runId = String(p.run_id ?? "");
+    if (!/^\d+$/.test(runId)) return;
+    const hooks = path.join(config.dataDir, "hooks");
+    fs.mkdirSync(hooks, { recursive: true });
+    fs.writeFileSync(path.join(hooks, `${runId}.done`), JSON.stringify(p));
+    const chatId = config.allowedUserIds[0];
+    if (!chatId || apkBusy) return;
+    if (p.status !== "success") {
+      void bot.api.sendMessage(chatId, `❌ Actions APK koşusu başarısız (${p.ref ?? "?"}, run ${runId}): ${p.status}`).catch(() => undefined);
+      return;
+    }
+    void runApkBuild(chatId, { runId, note: `Actions · ${p.ref ?? ""} ${String(p.sha ?? "").slice(0, 7)}`.trim() });
+  };
 
   bot.command("limit", async (ctx) => {
     const r = await fetchUsage();

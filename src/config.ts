@@ -53,9 +53,16 @@ export const config = {
   /** Büyük dosya linkleri: tunnel (Cloudflare quick tunnel, varsayılan) | lan (PUBLIC_BASE_URL) | off */
   fileLinks: (process.env.FILE_LINKS ?? "tunnel") as "tunnel" | "lan" | "off",
   publicBaseUrl: process.env.PUBLIC_BASE_URL || undefined,
-  filePort: Number(process.env.FILE_PORT ?? 8787),
+  /** Railway/Render gibi PaaS'lar PORT verir; yoksa FILE_PORT (8787). */
+  filePort: Number(process.env.FILE_PORT ?? process.env.PORT ?? 8787),
   linkTtlHours: Number(process.env.LINK_TTL_HOURS ?? 24),
   cloudflaredPath: process.env.CLOUDFLARED_PATH ?? "/usr/local/bin/cloudflared",
+
+  /** APK nerede üretilir: local (container'da flutter/gradle) | actions (GitHub Actions; container'da JDK/Android gerekmez) */
+  apkBuilder: (process.env.APK_BUILDER ?? "local") as "local" | "actions",
+  apkWorkflow: process.env.APK_WORKFLOW ?? "agent-apk.yml",
+  /** Actions → bot webhook ping'i (POST /hook/build, x-agent-secret). Boşsa uç kapalı. */
+  buildWebhookSecret: process.env.BUILD_WEBHOOK_SECRET || undefined,
 
   get statePath() {
     return path.join(this.dataDir, "state.json");

@@ -109,6 +109,9 @@ function readSystemPromptAppend(): string {
     `- SDK dizini: ${config.sdkHome} (BASH_ENV=${config.sdkHome}/env.sh her bash'te yüklenir)`,
     `- Bağlı SDK'lar: ${listSdks()}`,
     `- Git kimliğin: ${config.gitUserName} <${config.gitUserEmail}>`,
+    config.apkBuilder === "actions"
+      ? `- APK: GitHub Actions'ta üretilir (APK_BUILDER=actions). build-apk.sh aynı argümanlarla apk-remote.sh'a devreder: dal push edilmiş olmalı, koşu 4-10 dk. Container'da JDK/Android/Gradle YOK; 'flutter build apk' çalıştırma, sadece test/analyze/web.`
+      : "",
     `- PR aracı: ${config.provider === "github" ? "gh pr create" : "glab mr create"}`,
     `- Kapı durumu: faz=${st.phase}, planOnayı=${st.approved ? "VAR" : "YOK"}, prOnayı=${st.prApproved ? "VAR" : "YOK"}${st.freeMode ? ", SERBEST MOD" : ""}${config.autoPr ? ", AUTO_PR açık (PR sorusu atlanır)" : ""}`,
     st.branch ? `- Aktif görev dalı: ${st.branch}` : "",

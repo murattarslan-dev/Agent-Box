@@ -139,6 +139,30 @@ export GRADLE_USER_HOME="$SDK_HOME/gradle"
 SDK_HOME="$SDK_HOME" "$SCRIPTS_DIR/sdk-env.sh" 2>&1 | sed 's/^/[entrypoint] /' >&2 || true
 SDK_HOME="$SDK_HOME" "$SCRIPTS_DIR/sdk-env.sh" --list 2>/dev/null | sed 's/^/[entrypoint]   sdk: /' >&2 || true
 
+# ---------- 6) SDK otomatik kurulum (PaaS: Railway/Render/Fly — up.sh önden volume kuramaz) ----------
+# SDK_AUTOINSTALL=1 ve SDKS="flutter:3.24.5,jdk:17" verilmişse, bağlı olmayanları arka planda $SDK_HOME'a kurar
+# (volume'da kalıcı; bir sonraki açılışta atlanır). Bot bu sırada çalışır; /sdk ile durum, log: $DATA_DIR/logs/sdk-autoinstall.log
+if [[ "${SDK_AUTOINSTALL:-0}" =~ ^(1|true|yes)$ && -n "${SDKS:-}" && "${SDKS}" != none ]]; then
+  MISSING=()
+  HAVE="$(SDK_HOME="$SDK_HOME" "$SCRIPTS_DIR/sdk-env.sh" --list 2>/dev/null | awk '{print $1":"$2}')"
+  for kv in ${SDKS//,/ }; do
+    n="${kv%%[:=]*}"; v="${kv#*[:=]}"; [[ -n "$n" && -n "$v" && "$n" != "$v" ]] || continue
+    grep -qx "$n:$v" <<<"$HAVE" || MISSING+=("$n $v")
+  done
+  if (( ${#MISSING[@]} )); then
+    log "SDK otomatik kurulum arka planda: ${MISSING[*]} (log: $DATA_DIR/logs/sdk-autoinstall.log)"
+    (
+      for m in "${MISSING[@]}"; do
+        # shellcheck disable=SC2086
+        "$SCRIPTS_DIR/sdk-install.sh" $m "$SDK_HOME/${m%% *}/${m#* }" && echo "[autoinstall] $m tamam" || echo "[autoinstall] $m BAŞARISIZ"
+      done
+      SDK_HOME="$SDK_HOME" "$SCRIPTS_DIR/sdk-env.sh" && echo "[autoinstall] env.sh yenilendi"
+    ) >> "$DATA_DIR/logs/sdk-autoinstall.log" 2>&1 &
+  else
+    log "SDK otomatik kurulum: hepsi mevcut"
+  fi
+fi
+
 rm -f "$DATA_DIR/.healthy"
 log "Hazır. Bot başlatılıyor…"
 exec "$@"

@@ -12,6 +12,8 @@
 # Çıktı satırları (bot ayrıştırır):  APK: <yol> <bayt>     SIZE: <yol> <MB> <mod> <sığdı|büyük>
 #                                    ANALYZE: <satır>       (limit aşıldıysa en büyük bileşenler)
 set -euo pipefail
+# APK_BUILDER=actions: build GitHub Actions'ta yapılır (container'da JDK/Android gerekmez) — aynı argümanlar, aynı çıktı satırları.
+if [[ "${APK_BUILDER:-local}" == actions ]]; then exec "$(dirname "${BASH_SOURCE[0]}")/apk-remote.sh" "$@"; fi
 # shellcheck disable=SC1091
 [[ -f "${SDK_HOME:-/data/sdks}/env.sh" ]] && source "${SDK_HOME:-/data/sdks}/env.sh"
 

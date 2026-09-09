@@ -1,0 +1,176 @@
+# claude-telegram-agent — APK'yı GitHub Actions'ta üret (bot container'ında JDK/Android/Gradle gerekmez).
+# Hedef repoya .github/workflows/agent-apk.yml olarak konur (Telegram'da `/apk setup` bunu PR ile ekler).
+#
+# Tetikleme:
+#   - bot: `gh workflow run agent-apk.yml --ref <dal> -f mode=small`  (APK_BUILDER=actions)
+#   - push: agent/** dallarına push'ta otomatik (istemiyorsan aşağıdaki push bloğunu sil)
+# Çıktı: "apk" artifact'i (en küçük APK + result.txt); isteğe bağlı webhook ping (AGENT_WEBHOOK_URL/SECRET secret'ları).
+# Sürümler: .tool-versions → .sdks → CLAUDE.md ```sdks bloğu → varsayılan (stable / JDK 17).
+name: agent-apk
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "small (release→profile→debug, ≤limit) | release | profile | debug"
+        default: small
+        type: string
+      flavor:
+        description: "flutter --flavor (boş = yok)"
+        default: ""
+        type: string
+      limit:
+        description: "hedef üst sınır (MB)"
+        default: "50"
+        type: string
+      all_abi:
+        description: "tek fat APK (tüm ABI'ler)"
+        default: false
+        type: boolean
+  push:
+    branches: ["agent/**"]
+
+concurrency:
+  group: agent-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sürümleri oku (.tool-versions / .sdks / CLAUDE.md)
+        id: ver
+        shell: bash
+        run: |
+          get() {  # get <isim> → sürüm (yoksa boş)
+            local n="$1" v=""
+            [[ -f .tool-versions ]] && v="$(awk -v k="$n" '$1==k{print $2}' .tool-versions | sed -E 's/-stable$//; s/^temurin-//; s/^v//' | head -1)"
+            [[ -z "$v" && "$n" == flutter && -f .fvmrc ]] && v="$(grep -oE '"flutter"\s*:\s*"[^"]+"' .fvmrc | grep -oE '[0-9][^"]*' || true)"
+            for f in .sdks sdks.txt .sdk-versions; do
+              [[ -z "$v" && -f "$f" ]] && v="$(sed -E 's/#.*//; s/[:=]/ /' "$f" | awk -v k="$n" '$1==k{print $2; exit}')"
+            done
+            if [[ -z "$v" && -f CLAUDE.md ]]; then
+              v="$(awk '/^```sdks/{f=1;next} /^```/{f=0} f' CLAUDE.md | sed -E 's/#.*//; s/[:=]/ /' | awk -v k="$n" '$1==k{print $2; exit}')"
+              [[ "$v" == *"<"* ]] && v=""
+            fi
+            printf '%s' "$v"
+          }
+          FL="$(get flutter)"; JD="$(get jdk)"; [[ -n "$JD" ]] || JD="$(get java)"; [[ -n "$JD" ]] || JD=17
+          JD="${JD%%.*}"
+          echo "flutter=${FL}" >> "$GITHUB_OUTPUT"
+          echo "jdk=${JD}" >> "$GITHUB_OUTPUT"
+          echo "Flutter: ${FL:-stable (pin yok)}  JDK: $JD"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.ver.outputs.jdk }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ steps.ver.outputs.flutter }}
+          cache: true
+
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Build (en küçük APK)
+        id: build
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode || 'small' }}
+          FLAVOR: ${{ inputs.flavor }}
+          LIMIT_MB: ${{ inputs.limit || '50' }}
+          ALL_ABI: ${{ inputs.all_abi }}
+        run: |
+          set -uo pipefail
+          mkdir -p out/symbols
+          APP="$(awk '/^name:/{print $2; exit}' pubspec.yaml | tr -d '"'"'"'"' || echo app)"
+          SHA="$(git rev-parse --short HEAD)"
+          LIMIT=$(( LIMIT_MB * 1024 * 1024 ))
+          export GRADLE_OPTS="-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
+          build_mode() {
+            local mode="$1" args=(build apk "--$mode")
+            [[ "$ALL_ABI" == "true" ]] || args+=(--split-per-abi --target-platform android-arm64)
+            [[ "$mode" != debug ]] && args+=(--obfuscate "--split-debug-info=out/symbols/$mode" --tree-shake-icons)
+            [[ -n "$FLAVOR" ]] && args+=(--flavor "$FLAVOR")
+            echo "→ flutter ${args[*]}"
+            rm -rf build/app/outputs/flutter-apk build/app/outputs/apk 2>/dev/null || true
+            flutter "${args[@]}" || return 1
+            shopt -s nullglob; local apks=(build/app/outputs/flutter-apk/*.apk build/app/outputs/apk/*/*/*.apk build/app/outputs/apk/*/*.apk); shopt -u nullglob
+            (( ${#apks[@]} )) || return 1
+            BUILT=""; for f in "${apks[@]}"; do [[ "$f" == *arm64* ]] && BUILT="$f"; done; [[ -n "$BUILT" ]] || BUILT="${apks[0]}"
+          }
+          if [[ "$MODE" == small ]]; then ORDER=(release profile debug); else ORDER=("$MODE"); fi
+          BEST=""; BEST_SIZE=0; BEST_MODE=""
+          : > out/result.txt
+          for m in "${ORDER[@]}"; do
+            if build_mode "$m"; then
+              size="$(stat -c %s "$BUILT")"; abi="$(grep -oE 'arm64-v8a|armeabi-v7a|x86_64|x86' <<<"$(basename "$BUILT")" || true)"
+              name="${APP}-${m}${abi:+-$abi}-${SHA}.apk"; cp -f "$BUILT" "out/$name"
+              mb="$(awk -v s="$size" 'BEGIN{printf "%.1f", s/1048576}')"
+              if (( size <= LIMIT )); then
+                echo "SIZE: $name $mb $m sığdı" | tee -a out/result.txt
+                BEST="$name"; BEST_SIZE=$size; BEST_MODE=$m; break
+              else
+                echo "SIZE: $name $mb $m büyük" | tee -a out/result.txt
+                if [[ -z "$BEST" || $size -lt $BEST_SIZE ]]; then BEST="$name"; BEST_SIZE=$size; BEST_MODE=$m; fi
+              fi
+            else
+              echo "FAIL: $m" | tee -a out/result.txt
+            fi
+          done
+          [[ -n "$BEST" ]] || { echo "hiçbir mod build olmadı"; exit 1; }
+          # yalnızca en iyisini bırak (artifact küçük kalsın)
+          for f in out/*.apk; do [[ "$(basename "$f")" == "$BEST" ]] || rm -f "$f"; done
+          echo "APK: $BEST $BEST_SIZE" | tee -a out/result.txt
+          if (( BEST_SIZE > LIMIT )) && command -v unzip >/dev/null; then
+            unzip -l "out/$BEST" | awk 'NR>3 && $1 ~ /^[0-9]+$/ { split($4,p,"/"); k=p[1]; if (p[2]!="" && (k=="lib"||k=="assets")) k=k"/"p[2]; s[k]+=$1 } END { for (k in s) printf "%d %s\n", s[k], k }' \
+              | sort -rn | head -8 | awk '{printf "ANALYZE: %6.1f MB  %s\n", $1/1048576, $2}' | tee -a out/result.txt
+          fi
+          echo "best=$BEST" >> "$GITHUB_OUTPUT"; echo "size=$BEST_SIZE" >> "$GITHUB_OUTPUT"; echo "mode=$BEST_MODE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: |
+            out/*.apk
+            out/result.txt
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Symbols (release/profile)
+        if: steps.build.outputs.mode != 'debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: symbols
+          path: out/symbols
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # İsteğe bağlı: bota "hazır" ping'i (bekleme kısalır; bot artifact'i kendisi gh ile indirir).
+      # Repo secrets: AGENT_WEBHOOK_URL = https://<bot-adresi>/hook/build , AGENT_WEBHOOK_SECRET = .env BUILD_WEBHOOK_SECRET
+      - name: Webhook ping
+        if: always() && env.AGENT_WEBHOOK_URL != ''
+        env:
+          AGENT_WEBHOOK_URL: ${{ secrets.AGENT_WEBHOOK_URL }}
+          AGENT_WEBHOOK_SECRET: ${{ secrets.AGENT_WEBHOOK_SECRET }}
+        run: |
+          curl -sS -m 15 -X POST "$AGENT_WEBHOOK_URL" \
+            -H "content-type: application/json" -H "x-agent-secret: $AGENT_WEBHOOK_SECRET" \
+            -d "{\"run_id\":${{ github.run_id }},\"status\":\"${{ job.status }}\",\"ref\":\"${{ github.ref_name }}\",\"sha\":\"${{ github.sha }}\",\"apk\":\"${{ steps.build.outputs.best }}\",\"size\":${{ steps.build.outputs.size || 0 }},\"event\":\"${{ github.event_name }}\"}" || true

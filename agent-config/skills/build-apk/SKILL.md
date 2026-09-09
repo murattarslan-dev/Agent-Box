@@ -7,6 +7,10 @@ description: Flutter projesinden kullanıcının telefonuna kurabileceği EN KÜ
 
 Amaç: kullanıcının telefonuna kurup deneyebileceği paketi, **mümkünse 50 MB'ın altında** (Telegram'dan doğrudan dosya olarak gelir) ulaştırmak. Hazır script bunun için gereken her şeyi kendisi dener; sen çağırır, sonucu yorumlar, sığmadıysa bir sonraki adımı önerirsin.
 
+## APK_BUILDER=actions ise (sistem promptunda yazar)
+
+Build container'da değil GitHub Actions'ta yapılır; `build-apk.sh` aynı argümanlarla `apk-remote.sh`'a devreder (workflow'u tetikler, izler, artifact'i indirir, aynı `SIZE:`/`APK:` satırlarını basar). Farklar: (1) **dal push edilmiş olmalı** — henüz push edilmemiş bir agent dalı için önce PR akışını bitir ya da kullanıcıya "PR onayından sonra APK gelecek" de; (2) repoda `.github/workflows/agent-apk.yml` olmalı (yoksa kullanıcıya `/apk setup` de; sen ekleme); (3) `flutter build apk`'yi elle çalıştırma, container'da Gradle yok. Küçültme planı/analiz kısmı aynen geçerli.
+
 ## Script ne yapıyor (bilmen yeterli, tekrar yapma)
 
 `/app/scripts/build-apk.sh small --outbox` sırayla **release → profile → debug** dener ve limitin altına inen ilkinde durur. Her denemede:

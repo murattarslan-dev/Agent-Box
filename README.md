@@ -79,6 +79,7 @@ yazdıkların kuyruğa girer.
 | `/test` · `/lint` · `/build` · `/format` · `/doctor` · `/deps` | Repo görevini **Claude çalıştırmadan** koşar (`.agent-tasks` ya da proje türüne göre varsayılan); yeşilse özet, kırmızıysa son satırlar + "🤖 Ajana düzelttir" butonu |
 | `/task [ad]` | Görev listesi / `.agent-tasks`'taki özel görev |
 | `/apk [small\|release\|profile\|debug] [all] [flavor X] [limit MB]` | Flutter APK build eder. Varsayılan `small`: release → profile → debug sırasıyla dener, yalnızca arm64, obfuscate + tree-shake; 50 MB altına inen ilkini Telegram'dan dosya olarak gönderir, sığmazsa en küçüğünü **download linki** ile verir ve paketi büyüten bileşenleri listeler. Ajan da görev içinde `build-apk` skill'iyle yapar ve küçültme planı önerir |
+| `/apk setup` | Hedef repoya GitHub Actions workflow'u (PR) ekler; `APK_BUILDER=actions` ile APK orada üretilir, container'da JDK/Android/Gradle gerekmez — bkz. [Railway](docs/railway.md) |
 | `/builds` | Son build'ler ve indirme linkleri |
 | `/tunnel [check\|restart]` | Download linki tünelinin durumu (adres, dışarıdan doğrulama, son hata), test linki; `restart` ile yeniden kur |
 | `/approve` | Plan kapısını buton olmadan aç |
@@ -222,6 +223,17 @@ Giriş gerektiren ekranlar için `.env`'e test kullanıcısının token'ını `A
 bloğuna `storage: <localStorage anahtarı>=$APP_TEST_TOKEN` yaz; script token'ı tarayıcıya sayfa açılmadan enjekte
 eder (Flutter web canvas'a çizdiği için forma yazarak login olunamaz). Hash routing kullanan uygulamalarda
 `hash: true`. Sınır: native görünümler (izin diyaloğu, kamera) web'de yok — onlar için `/apk`.
+
+## APK'yı GitHub Actions'ta üretmek (ucuz sunucular için)
+
+Container'daki APK build'i (Gradle + JDK) 4-6 GB RAM ister ve SDK volume'unu 6-8 GB'a çıkarır; Railway gibi kullanım
+başına ücretlendiren yerlerde faturanın büyük kısmı budur. `APK_BUILDER=actions` ile build hedef repodaki bir GitHub
+Actions workflow'unda yapılır: bot `gh workflow run` ile tetikler, koşuyu izler, artifact'i indirip Telegram'a gönderir
+(aynı `/apk` komutu, aynı küçültme stratejisi; ajan da `build-apk` skill'inde aynı yolu kullanır). Container'da yalnızca
+Flutter SDK kalır (`SDKS=flutter:<sürüm>`; test/analyze/web önizleme için). Kurulum: Telegram'da `/apk setup` workflow
+PR'ını açar, merge edersin, PAT'a Actions izni eklersin. İsteğe bağlı webhook (`BUILD_WEBHOOK_SECRET` + repo secrets)
+beklemeyi kısaltır ve `agent/**` dallarına her push'ta üretilen APK'yı kendiliğinden gönderir. Private repoda ayda 2000
+Actions dakikası ücretsiz; cache'li koşu 4-8 dk. Railway kurulumu adım adım: [docs/railway.md](docs/railway.md).
 
 ## Büyük dosyalar: download linki
 
