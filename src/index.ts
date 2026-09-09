@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { config } from "./config.js";
 import { Agent } from "./agent.js";
 import { createBot, markHealthy } from "./bot.js";
@@ -59,9 +61,23 @@ async function main() {
   const hello = auth.ok
     ? `🟢 Ajan ayakta · ${config.repoPath || config.repoUrl} · faz: ${st.phase}${st.sessionId ? " (oturum devam ediyor)" : ""}`
     : `🔴 Ajan ayakta ama Claude token sorunu var: ${auth.reason}`;
-  for (const uid of config.allowedUserIds) {
-    bot.api.sendMessage(uid, hello).catch(() => undefined);
+  // Restart fırtınasında (çökme döngüsü, token çakışması) her açılışta mesaj atma: aynı mesaj 10 dk içinde tekrar gönderilmez.
+  const helloMark = path.join(config.dataDir, ".last-hello");
+  let sendHello = true;
+  try {
+    const [ts, prev] = fs.readFileSync(helloMark, "utf8").split("\n");
+    if (prev === hello && Date.now() - Number(ts) < 10 * 60_000) sendHello = false;
+  } catch {
+    /* ilk açılış */
   }
+  if (sendHello) {
+    try {
+      fs.writeFileSync(helloMark, `${Date.now()}\n${hello}`);
+    } catch {
+      /* yazılamazsa geç */
+    }
+    for (const uid of config.allowedUserIds) bot.api.sendMessage(uid, hello).catch(() => undefined);
+  } else console.log("[bot] açılış mesajı atlandı (10 dk içinde aynı mesaj gönderilmişti)");
 
   const stop = async () => {
     console.log("[bot] kapanıyor…");
@@ -73,10 +89,24 @@ async function main() {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 
-  await bot.start({
-    drop_pending_updates: false,
-    onStart: (me) => console.log(`[bot] @${me.username} dinliyor`),
-  });
+  try {
+    await bot.start({
+      drop_pending_updates: false,
+      onStart: (me) => console.log(`[bot] @${me.username} dinliyor`),
+    });
+  } catch (e: any) {
+    // 409: aynı bot token'ıyla başka bir örnek çalışıyor (ör. bilgisayardaki Docker + Railway). Restart döngüsüne girme: uyar, bekle, çık.
+    if (e?.error_code === 409 || /terminated by other getUpdates/i.test(String(e?.description ?? e?.message ?? e))) {
+      const msg =
+        "⚠️ Aynı Telegram bot token'ıyla BAŞKA bir ajan örneği çalışıyor (bilgisayarındaki Docker ve Railway aynı anda?). " +
+        "Telegram tek örneğe izin verir; diğerini durdur (./up.sh down) ya da ikinci bot için BotFather'dan ayrı token al. Bu örnek 60 sn bekleyip yeniden deneyecek.";
+      console.error("[bot] 409 Conflict: " + msg);
+      for (const uid of config.allowedUserIds) await bot.api.sendMessage(uid, msg).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 60_000));
+      process.exit(1);
+    }
+    throw e;
+  }
 }
 
 process.on("unhandledRejection", (e) => console.error("[bot] unhandledRejection:", e));
